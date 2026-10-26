@@ -68,8 +68,16 @@ def hook_command(agent, user_level=False):
     return f'{baton_command()} hook {agent}' + (' --global' if user_level else '')
 
 
-def is_baton_hook(command):
-    return LEGACY in command or ('baton' in command and ' hook ' in command)
+# Our hook commands: `<python> "<...>/bin/baton" hook <agent>` with an optional `--global`, the script path quoted with
+# "..." or '...'. Only these (and the legacy agent-memory.py script) are ever replaced or removed.
+BATON_HOOK_RE = re.compile(r"""/bin/baton["']?\s+hook\s+[\w-]+(\s+--global)?\s*$""")
+
+
+def is_baton_hook(command, agent=None):
+    if LEGACY in command:
+        return agent is None
+    match = BATON_HOOK_RE.search(command)
+    return bool(match) and (agent is None or re.search(rf'\shook\s+{re.escape(agent)}(\s|$)', command) is not None)
 
 
 def merge_hooks(root, agent, replace_legacy, log, user_level=False):
@@ -107,6 +115,66 @@ def has_baton_hooks(base, agent):
 
 def user_home():
     return Path.home()
+
+
+def hook_config(path):
+    """A hook file's content after checking its shape ({"hooks": {event: [{"hooks": [{...}]}]}}); None if absent."""
+    if not path.exists():
+        return None
+    config = read_json(path)
+    hooks = config.get('hooks', {}) if isinstance(config, dict) else None
+    ok = isinstance(hooks, dict) and all(
+        isinstance(groups, list) and all(
+            isinstance(group, dict) and isinstance(group.get('hooks', []), list)
+            and all(isinstance(h, dict) for h in group.get('hooks', [])) for group in groups)
+        for groups in hooks.values())
+    if not ok:
+        raise InitError(f'{path} does not have the expected hooks layout; fix it by hand, nothing was changed.')
+    return config
+
+
+def remove_hooks(base, agent, log, label):
+    """Take AI Baton's hooks out of `base`'s hook file for `agent`, keeping every other hook and setting."""
+    path = base / HOOK_FILES[agent]
+    config = hook_config(path)
+    if config is None:
+        return
+    hooks = config.get('hooks') or {}
+    removed = 0
+    for event in list(hooks):
+        groups = []
+        for group in hooks[event]:
+            kept = [h for h in group.get('hooks', []) if not is_baton_hook(h.get('command', ''))]
+            removed += len(group.get('hooks', [])) - len(kept)
+            if kept:
+                groups.append({**group, 'hooks': kept})
+        if groups:
+            hooks[event] = groups
+        else:
+            del hooks[event]
+    if not removed:
+        return
+    if hooks:
+        config['hooks'] = hooks
+    else:
+        config.pop('hooks', None)
+    write_json(path, config)
+    log.append(f'- {label}{HOOK_FILES[agent]}: removed {removed} AI Baton hook(s)')
+
+
+def uninstall_hooks(only=None, project=None):
+    """Remove AI Baton's hooks from user settings (and from `project`, if given). Other hooks and settings stay."""
+    log = []
+    kinds = {a['hooks'] for a in load_agents() + load_agents(hidden=True)
+             if a.get('hooks') in HOOK_FILES and (only is None or a['id'] in only)}
+    targets = [(user_home(), kind, '~/') for kind in sorted(kinds)]
+    if project:
+        targets += [(Path(project).expanduser().resolve(), kind, '') for kind in sorted(kinds)]
+    for base, kind, _ in targets:  # Check every file first: a bad one stops the run before anything changes.
+        hook_config(base / HOOK_FILES[kind])
+    for base, kind, label in targets:
+        remove_hooks(base, kind, log, label)
+    return log
 
 
 def install_user_hooks(only=None):

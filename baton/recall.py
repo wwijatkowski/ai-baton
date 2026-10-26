@@ -1,17 +1,37 @@
 """`baton recall`: search every saved checkpoint, newest first (the cold memory tier)."""
-import gzip
 import json
+import zlib
 
 from .project import ARCHIVE, HISTORY, MEMORY_DIR, find_root
 
 SNIPPET = 220
 
 
+def archive_lines(path):
+    """Lines of the gzip archive, one member at a time. A damaged member (e.g. from two writers before the history
+    lock existed) is skipped by jumping to the next gzip header, so one bad spot never hides the rest."""
+    data = path.read_bytes()
+    pos = 0
+    while pos < len(data):
+        reader = zlib.decompressobj(31)
+        try:
+            text = reader.decompress(data[pos:])
+            if not reader.eof:
+                raise zlib.error('truncated member')
+        except zlib.error:
+            following = data.find(b'\x1f\x8b\x08', pos + 1)
+            if following == -1:
+                return
+            pos = following
+            continue
+        yield from text.decode('utf-8', 'replace').splitlines()
+        pos = len(data) - len(reader.unused_data)
+
+
 def entries(mem):
     archive, history = mem / ARCHIVE, mem / HISTORY
     if archive.exists():
-        with gzip.open(archive, 'rt') as stream:
-            yield from stream
+        yield from archive_lines(archive)
     if history.exists():
         yield from history.read_text().splitlines()
 

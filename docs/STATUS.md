@@ -28,8 +28,9 @@ One place to switch between coding agents on a project without losing context or
    - Main path: a local MCP server (`baton mcp`, stdio, no network) with tools `baton_context` (what the hooks inject at start) and `baton_checkpoint` (save a summary at the end). Most agents speak MCP; AGENTS.md tells them to call the tools. Checkpoints land in the same history, so Recent work and other agents see them.
    - Fallback: the extension infers a checkpoint when the handoff doc or git changes while a hook-less agent was the last one opened (marked as inferred).
    - Per agent, use native hooks where they exist (check each agent's docs when adding it).
-3. More reviewers for `baton review`: agents with a headless CLI (check Gemini CLI, Copilot CLI) get a runner in `review.py` and `"review"` in the registry; panel-only agents (Cline, Continue) cannot review.
-4. Tests for extension.js flows with a mocked VS Code API (Ask for review: session pick, cancel at each step, "No particular conversation", Send to the chosen session); today only the webviews and the CLI are tested.
-5. Measure whether project memory saves tokens (tokens spent before real work starts, before vs after init).
-6. Set up the user's own projects with AI Baton (the list and order are kept privately; ask the user first).
-7. Optionally remove the old project hooks from projects set up before the global hooks (global hooks cover them; ask the user first).
+3. Idea: give an agent its own latest checkpoint when it starts a new chat (today hooks deliver only the other agents' checkpoints; the same agent relies on the handoff docs).
+4. More reviewers for `baton review`: agents with a headless CLI (check Gemini CLI, Copilot CLI) get a runner in `review.py` and `"review"` in the registry; panel-only agents (Cline, Continue) cannot review.
+5. Tests for extension.js flows with a mocked VS Code API (Ask for review: session pick, cancel at each step, "No particular conversation", Send to the chosen session); today only the webviews and the CLI are tested.
+6. Measure whether project memory saves tokens (tokens spent before real work starts, before vs after init).
+7. Set up the user's own projects with AI Baton (the list and order are kept privately; ask the user first).
+8. Optionally remove the old project hooks from projects set up before the global hooks (global hooks cover them; ask the user first).

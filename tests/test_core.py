@@ -273,6 +273,67 @@ class MemoryTiersTest(unittest.TestCase):
                     {'state': 'working', 'at': '2020-01-01T00:00:00+00:00'}, {'state': 'idle', 'at': recent}):
             self.assertFalse(is_working(odd), odd)
 
+    def test_uninstall_hooks_keeps_other_hooks_and_settings(self):
+        home = Path(self.tmp.name) / 'home'
+        with mock.patch.object(init_project, 'user_home', return_value=home):
+            init_project.install_user_hooks()
+            settings = read_json(home / '.claude/settings.json')
+            settings['model'] = 'opus'
+            settings['hooks']['Stop'].append({'hooks': [{'type': 'command', 'command': 'echo lint'}]})
+            (home / '.claude/settings.json').write_text(json.dumps(settings))
+            log = init_project.uninstall_hooks(project=self.project)
+            kept = read_json(home / '.claude/settings.json')
+            self.assertEqual(kept['model'], 'opus')
+            self.assertEqual(kept['hooks'], {'Stop': [{'hooks': [{'type': 'command', 'command': 'echo lint'}]}]})
+            self.assertNotIn('hooks', read_json(home / '.codex/hooks.json'))
+            self.assertFalse(init_project.has_baton_hooks(self.project, 'claude'))  # Project hooks gone too.
+            self.assertTrue(any('removed 3' in line for line in log))
+            self.assertEqual(init_project.uninstall_hooks(), [])  # Nothing left: nothing to do.
+            # Look-alike commands of other tools are never touched, on install or uninstall.
+            lookalikes = ['python3 /tools/baton-check.py hook validate', 'baton hook-runner --all', 'echo baton hook']
+            (home / '.codex/hooks.json').write_text(json.dumps({'hooks': {'Stop': [{'hooks': [
+                {'type': 'command', 'command': c} for c in lookalikes]}]}}))
+            init_project.install_user_hooks()
+            init_project.uninstall_hooks()
+            left = [h['command'] for g in read_json(home / '.codex/hooks.json')['hooks']['Stop'] for h in g['hooks']]
+            self.assertEqual(left, lookalikes)
+            self.assertTrue(init_project.is_baton_hook("python3 '/odd $dir/bin/baton' hook claude --global", 'claude'))
+            # An odd but valid file stops the run before anything is changed.
+            init_project.install_user_hooks()
+            before = (home / '.claude/settings.json').read_text()
+            (home / '.codex/hooks.json').write_text('{"hooks": {"Stop": null}}')
+            with self.assertRaises(init_project.InitError):
+                init_project.uninstall_hooks()
+            self.assertEqual((home / '.claude/settings.json').read_text(), before)
+
+    def test_concurrent_checkpoints_keep_the_archive_readable(self):
+        # Several agents stopping at the same moment once interleaved their gzip writes and broke the archive.
+        script = (
+            'import sys, json; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from baton import hook; '
+            'hook.HISTORY_LIMIT = 3; mem = Path(sys.argv[2]); '
+            '[hook.append_history(mem, {"agent": "a", "n": f"{sys.argv[3]}-{i}", "saved_at": "x"}) for i in range(15)]')
+        mem = self.project / '.agent-memory'
+        mem.mkdir(exist_ok=True)
+        procs = [subprocess.Popen([sys.executable, '-c', script, str(ROOT), str(mem), str(w)]) for w in range(12)]
+        for proc in procs:
+            self.assertEqual(proc.wait(timeout=60), 0)
+        seen = [json.loads(line)['n'] for line in recall.entries(mem) if line.strip()]
+        self.assertEqual(len(seen), 12 * 15)
+        self.assertEqual(len(set(seen)), 12 * 15)
+
+    def test_damaged_archive_is_skipped_not_fatal(self):
+        import gzip
+        mem = self.project / '.agent-memory'
+        mem.mkdir(exist_ok=True)
+        good = gzip.compress(b'{"agent": "a", "saved_at": "1", "summary": "before"}\n')
+        later = gzip.compress(b'{"agent": "b", "saved_at": "3", "summary": "after"}\n')
+        broken = gzip.compress(b'{"agent": "c"}\n' * 50)[:-30] + b'garbage'
+        (mem / 'history.archive.jsonl.gz').write_bytes(good + broken + later)
+        lines = list(recall.entries(mem))
+        self.assertIn('before', ''.join(lines))
+        self.assertIn('after', ''.join(lines))
+        self.assertTrue(status.project_status(self.project)['initialized'])  # The panel's status still works.
+
     def test_recent_work_groups_replies_by_session(self):
         mem = self.project / '.agent-memory'
         mem.mkdir(exist_ok=True)

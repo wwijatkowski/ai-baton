@@ -9,6 +9,7 @@ hot   -> a short summary per agent, injected here within HOT_BUDGET
 warm  -> the full last reply in .agent-memory/<agent>.json, plus a pointer to the changes (see changes.py)
 cold  -> every checkpoint in history.jsonl and its gzip archive, searched with `baton recall`
 """
+import fcntl
 import gzip
 import json
 import os
@@ -17,7 +18,7 @@ from datetime import datetime, timezone
 
 from . import changes
 from .project import ARCHIVE, HISTORY, baton_command, clip, find_root, is_working, load_agents, memory_dir, \
-    now_iso, read_json, write_json
+    now_iso, read_json, write_json, write_text
 
 HISTORY_LIMIT = 50
 SEEN_SESSIONS = 20
@@ -95,18 +96,22 @@ def set_activity(mem, agent, state, session_id, transcript=None):
 
 
 def append_history(mem, snapshot):
+    """Add a checkpoint to the history, moving the oldest ones to the gzip archive. Several agents can stop at the
+    same moment, so the whole read-modify-write runs under a lock: unlocked, two writers once interleaved their gzip
+    members and damaged the archive."""
     history = mem / HISTORY
-    lines = history.read_text().splitlines() if history.exists() else []
-    lines.append(json.dumps(snapshot, ensure_ascii=False))
-    overflow, lines = lines[:-HISTORY_LIMIT], lines[-HISTORY_LIMIT:]
-    if overflow:
-        # Appending writes a new gzip member; readers see one continuous stream.
-        archive = mem / ARCHIVE
-        with gzip.open(archive, 'at') as stream:
-            stream.write('\n'.join(overflow) + '\n')
-        os.chmod(archive, 0o600)
-    history.write_text('\n'.join(lines) + '\n')
-    history.chmod(0o600)
+    with open(mem / '.history.lock', 'a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        lines = history.read_text().splitlines() if history.exists() else []
+        lines.append(json.dumps(snapshot, ensure_ascii=False))
+        overflow, lines = lines[:-HISTORY_LIMIT], lines[-HISTORY_LIMIT:]
+        if overflow:
+            # Appending writes a new gzip member; readers see one continuous stream.
+            archive = mem / ARCHIVE
+            with gzip.open(archive, 'at') as stream:
+                stream.write('\n'.join(overflow) + '\n')
+            os.chmod(archive, 0o600)
+        write_text(history, '\n'.join(lines) + '\n', private=True)
 
 
 def save_checkpoint(mem, root, agent, payload):

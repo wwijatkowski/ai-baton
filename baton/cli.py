@@ -36,6 +36,9 @@ def main(argv=None):
     p.add_argument('--global', dest='user_level', action='store_true', help='installed in user settings, not the project')
     p = sub.add_parser('install-hooks', help='install memory hooks once for all projects (user settings)')
     p.add_argument('--agents', help='comma-separated agent ids (default: all agents with hooks)')
+    p = sub.add_parser('uninstall-hooks', help='remove the memory hooks from user settings (and optionally a project)')
+    p.add_argument('--agents', help='comma-separated agent ids (default: all)')
+    p.add_argument('--project', help='also remove project hooks from this folder')
     p = sub.add_parser('hook-status', help='whether memory hooks are installed and approved')
     p.add_argument('path', nargs='?', default='.')
     p.add_argument('--user', action='store_true', help='only check the user-level (global) hooks')
@@ -98,6 +101,13 @@ def main(argv=None):
         print('\n'.join(log))
         print('\nDone.' + (' Codex: approve the hooks once (the hooks button next to the model picker, "Review hooks", then '
                             'Allow all; in the terminal: /hooks).' if any('.codex' in line for line in log) else ''))
+    elif args.command == 'uninstall-hooks':
+        only = None if args.agents is None else {a.strip() for a in args.agents.split(',') if a.strip()}
+        try:
+            log = init_project.uninstall_hooks(only, args.project)
+        except init_project.InitError as error:
+            sys.exit(f'Error: {error}')
+        print('\n'.join(log) or 'No AI Baton hooks found.')
     elif args.command == 'hook-status':
         result = hookcheck.user_status() if args.user else hookcheck.status(args.path)
         if args.json:

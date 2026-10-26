@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from . import init_project
-from .init_project import HOOK_FILES, has_baton_hooks
+from .init_project import HOOK_FILES, has_baton_hooks, is_baton_hook
 from .project import find_root, load_agents, read_json, write_json
 
 CACHE = Path.home() / '.cache' / 'ai-baton' / 'hook-trust-v2.json'  # Bump the name when the result format changes.
@@ -73,7 +73,7 @@ def codex_trust(root):
     if key in cache:
         return cache[key]
     try:
-        hooks = [h for h in codex_hooks(binary, root) if 'baton' in h.get('command', '') and ' hook codex' in h['command']]
+        hooks = [h for h in codex_hooks(binary, root) if is_baton_hook(h.get('command', ''), 'codex')]
         # Per event, the user-level copy steps aside when the project hooks that event, so only that one counts.
         project_events = {h['eventName'] for h in hooks if h.get('source') == 'project'}
         hooks = [h for h in hooks if h.get('source') == 'project' or h['eventName'] not in project_events]
