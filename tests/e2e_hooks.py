@@ -101,8 +101,55 @@ def approve(home, hooks):
         f'[hooks.state.{json.dumps(h["key"])}]\ntrusted_hash = "{h["currentHash"]}"\n\n' for h in hooks), encoding='utf-8')
 
 
+def hook_results(codex, project, env):
+    """Codex's own report on each hook run (status, error text, duration), from a turn started via its app-server:
+    `codex exec` prints only "Failed"."""
+    import queue
+    import threading
+    proc = subprocess.Popen([codex, 'app-server'], cwd=project, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, text=True, encoding='utf-8', errors='replace')
+    lines = queue.Queue()
+    threading.Thread(target=lambda: [lines.put(line) for line in proc.stdout], daemon=True).start()
+
+    def send(message):
+        proc.stdin.write(json.dumps({'jsonrpc': '2.0', **message}) + '\n')
+        proc.stdin.flush()
+
+    def wait(test, seconds=60):
+        found = []
+        try:
+            while True:
+                message = json.loads(lines.get(timeout=seconds) or '{}')
+                if message.get('method') == 'hook/completed':
+                    found.append(message['params']['run'])
+                if test(message):
+                    return message, found
+        except queue.Empty:
+            return None, found
+
+    results = []
+    try:
+        send({'id': 1, 'method': 'initialize', 'params': {'clientInfo': {'name': 'ai-baton-test', 'version': '1'}}})
+        send({'method': 'initialized'})
+        send({'id': 2, 'method': 'thread/start', 'params': {'cwd': str(project)}})
+        started, found = wait(lambda m: m.get('id') == 2)
+        results += found
+        thread = ((started or {}).get('result') or {}).get('thread', {}).get('id')
+        if thread:
+            send({'id': 3, 'method': 'turn/start', 'params': {'threadId': thread, 'input': [{'type': 'text', 'text': 'hi'}]}})
+            results += wait(lambda m: m.get('method') == 'hook/completed' and
+                            m['params']['run']['eventName'] in ('userPromptSubmit', 'UserPromptSubmit'), 90)[1]
+        else:
+            print('thread/start answered:', started)
+    finally:
+        proc.kill()
+    return [(r['eventName'], r['status'], r.get('durationMs'), r.get('entries')) for r in results]
+
+
 def diagnose_codex(home, project, env):
     """What went wrong: the hook command run the way Codex runs it, and what Codex recorded about its hooks."""
+    for result in hook_results(shutil.which('codex'), project, env):
+        print('Codex hook result:', result)
     hook = json.loads((home / '.codex' / 'hooks.json').read_text(encoding='utf-8'))['hooks']['SessionStart'][0]['hooks'][0]
     payload = json.dumps({'cwd': str(project), 'hook_event_name': 'SessionStart', 'session_id': 'diagnose'})
     # Codex: `%COMSPEC% /C "<command>"` on Windows, `$SHELL -lc <command>` elsewhere.
