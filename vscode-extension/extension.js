@@ -614,9 +614,9 @@ async function askForReview(preset) {
     return vscode.window.showErrorMessage(`Review failed: ${error.message.replace(/^Error: /, '')}`);
   }
   const { review, reviewed } = result;
-  const text = `# Review by ${pick.agent.label}\n\nReviewed: ${reviewed}` +
-    (session ? `\nWork of: ${label(author)}, conversation from ${ago(session.saved_at)}` : '') +
-    (focus ? `\nFocus: ${focus}` : '') + `\n\n${review}\n`;
+  const text = `# Review by ${pick.agent.label}\n\n- Reviewed: ${reviewed}` +
+    (session ? `\n- Work of: ${label(author)}, conversation from ${ago(session.saved_at)}` : '') +
+    (focus ? `\n- Focus: ${focus}` : '') + `\n\n${review}\n`;
   const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content: text });
   // Later reviews open next to the previous one (wherever its tab is now) instead of adding a column each time.
   const holder = reviewDoc && vscode.window.tabGroups.all.find((group) => group.tabs.some((tab) =>

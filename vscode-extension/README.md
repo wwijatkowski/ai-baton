@@ -4,6 +4,8 @@
 
 > Preview. Works with the Claude Code and Codex extensions for VS Code, on macOS and Linux.
 
+![The AI Baton panel: Claude and Codex with their latest checkpoints, and Recent work](media/screenshots/panel.png)
+
 ## What it does
 
 - **Shared memory between agents.** When an agent finishes a turn, AI Baton saves a checkpoint: a summary and the agent's last reply. When another agent starts a chat, it gets the other agents' latest checkpoints, so you do not retell what happened. Checkpoints stay in your project (`.agent-memory/`, ignored by git).
@@ -12,6 +14,20 @@
 - **Recent work.** Sessions that saved AI Baton checkpoints, newest first, with their summaries; reopen a conversation or start a review from one.
 - **Usage and limits.** Tokens per day per agent, for this project or all, and the plan limits each agent last reported.
 - **Agents at a glance.** Model and effort for new conversations, which agent is working, and a warning when memory hooks are missing or not yet approved.
+
+### Ask for review
+
+Pick whose work to review, then the reviewer:
+
+![Ask for review, step 1: pick the conversation that made the changes](media/screenshots/review-picker.png)
+
+The review opens beside your code, and you can send it back to the author's conversation:
+
+![A review by Codex of Claude's change, with Send to Claude](media/screenshots/review-result.png)
+
+### Usage and limits
+
+![Tokens per day per agent, and the plan limits each agent last reported](media/screenshots/usage.png)
 
 ## Getting started
 

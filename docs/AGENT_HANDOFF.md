@@ -13,6 +13,7 @@ AI Baton 0.3.0 (preview) is ready to publish, pending a real-install check. Ever
 - Publishing accounts: Marketplace publisher `wwijatkowski` (extension id `wwijatkowski.ai-baton`); Open VSX namespace `wwijatkowski` waits for EclipseFdn/open-vsx.org#14730. Repo history is clean (noreply author, no private project names); the full old history is in the private repo `ai-baton-history` and `~/ai-baton-full-history-2026-10-26.bundle`.
 
 ## Recently done (2026-10-26)
+- Screenshots: 4 PNGs (1600x976) in `vscode-extension/media/screenshots/` (panel, review-picker, review-result, usage), taken by Claude desktop in a throwaway demo project and checked by Claude (no avatar, email or private project names). Added to the extension README. `package.sh` passes `--baseImagesUrl`/`--baseContentUrl` (the extension is in a subfolder) and the .vsix excludes the screenshots, so images load from GitHub: they show on the Marketplace only once the repo is public. Also fixed: review header lines ran together in Markdown preview (now a list); the usage chart's last two date labels overlapped.
 - Real package installed (`wwijatkowski.ai-baton` 0.3.0 from the .vsix); hooks call `~/.ai-baton/bin/baton`; Codex hooks re-approved. The installer only replaces `~/.ai-baton` when the version changes, so after rebuilding 0.3.0 its CLI was copied into `~/.ai-baton/versions/0.3.0` by hand.
 - `baton review` works without git (shadow snapshots, or a file list without git) and reviews a conversation's replies when no files changed (DECISIONS 2026-10-26).
 - UI round 5 (docs/UI_TEST_REPORT.md): 16 PASS, 2 FAIL. Fixed both: D6 (first conversation without git had no "before": baseline snapshot at init/first prompt, `refs/baton/baseline`) and X (New chat did nothing without an open Claude view: `editor.open` + `pin-to-panel`). Also: "Setting up…" progress on Initialize, a hint when there is no conversation to review, Restricted Mode notes in README and MANUAL_TEST. Codex reviewed the fixes; all 5 points applied (bounded baseline, retry after failure, no git filters in snapshots, marked baseline only, New chat without changing Claude's preferred location).
@@ -20,8 +21,7 @@ AI Baton 0.3.0 (preview) is ready to publish, pending a real-install check. Ever
 - Tests: 50 pass (3.11 and 3.9). First prompt in a 3000-file project without git: 1.5 s (one-time snapshot), then 0.05 s.
 
 ## Next steps (in this order)
-1. User takes 3 screenshots into `vscode-extension/media/screenshots/` (panel with agents and Recent work; the "whose work?" picker; a review tab with the Send-to notification); add them to the README.
-2. Publish: make `ai-baton` public; upload the .vsix on marketplace.visualstudio.com/manage (or `vsce publish --azure-credential` after `az login`, untested); Open VSX after #14730 closes.
+1. Publish: make `ai-baton` public FIRST (README images load from GitHub), then upload the .vsix on marketplace.visualstudio.com/manage (or `vsce publish --azure-credential` after `az login`, untested; it needs the same base URL flags as `scripts/package.sh`); Open VSX after #14730 closes.
 
 ## How we work (user's preferences)
 - Reply in Polish; docs in English. Ask before outward or destructive actions (pushes to other repos, history rewrites, deleting memory).

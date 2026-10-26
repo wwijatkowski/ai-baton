@@ -265,7 +265,8 @@
         const hgt = Math.max(1.5, (v / max) * plotH);
         svg.append(s('rect', { class: 'bar', x: x0 + ai * barW, y: 4 + plotH - hgt, width: barW, height: hgt, rx: Math.min(2, barW / 2), fill: color(id, ai) }));
       });
-      if (di % Math.ceil(days.length / 7) === 0 || di === days.length - 1) {
+      const every = Math.ceil(days.length / 7);  // The last day always gets a label, so skip a regular one too close to it.
+      if (di === days.length - 1 || (di % every === 0 && days.length - 1 - di >= every)) {
         const t = s('text', { class: 'axis', x: left + di * step + step / 2, y: H - 4, 'text-anchor': 'middle' });
         t.textContent = day.slice(8) + '.' + day.slice(5, 7);
         svg.append(t);
