@@ -24,15 +24,10 @@ jobs:
         run: |
           az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me \
             --resource 499b84ac-1321-427f-aa17-267ca6975798 --query "{id: id, displayName: displayName}" -o json
-      # The real test: publish the released 0.4.0 again. Without publisher rights the Marketplace refuses; with them
-      # it is skipped as already published, so nothing changes.
-      - uses: actions/checkout@v4
-        with:
-          ref: v0.4.0
+      # The real test: the identity's role on the publisher (a 403 without one). A skipped duplicate publish proves
+      # nothing: vsce only reads the public version list before skipping.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Package 0.4.0
-        run: sh scripts/package.sh
-      - name: Publish as the identity (0.4.0 exists, so it is skipped)
-        run: npx --yes @vscode/vsce@4.0.0 publish --packagePath ai-baton-0.4.0.vsix --skip-duplicate --azure-credential
+      - name: Publisher rights of the identity
+        run: npx --yes @vscode/vsce@4.0.0 verify-pat wwijatkowski --azure-credential
