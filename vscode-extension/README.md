@@ -8,7 +8,7 @@
 
 - **Shared memory between agents.** When an agent finishes a turn, AI Baton saves a checkpoint: a summary and the agent's last reply. When another agent starts a chat, it gets the other agents' latest checkpoints, so you do not retell what happened. Checkpoints stay in your project (`.agent-memory/`, ignored by git).
 - **Project knowledge in plain files.** `AGENTS.md` holds one set of rules for every agent; `docs/AGENT_HANDOFF.md`, `docs/STATUS.md` and `docs/knowledge/DECISIONS.md` hold the current state, progress and decisions. Agents read them when they start, including the same agent in a new chat.
-- **Ask for review.** Pick the conversation that made the changes and another agent; it critiques the current changes read-only and gives at least three ranked points with fixes. You can send the review back to the author's conversation (it is copied; you paste it). The author is asked to say what it accepts and to wait for your "ok" before changing code. Agents also run reviews themselves when you say "ask Codex".
+- **Ask for review.** Pick the conversation that made the changes and another agent; it critiques that work read-only (the changes, with or without git; or the conversation's replies when no files changed) and gives at least three ranked points with fixes. You can send the review back to the author's conversation (it is copied; you paste it). The author is asked to say what it accepts and to wait for your "ok" before changing code. Agents also run reviews themselves when you say "ask Codex".
 - **Recent work.** Sessions that saved AI Baton checkpoints, newest first, with their summaries; reopen a conversation or start a review from one.
 - **Usage and limits.** Tokens per day per agent, for this project or all, and the plan limits each agent last reported.
 - **Agents at a glance.** Model and effort for new conversations, which agent is working, and a warning when memory hooks are missing or not yet approved.
@@ -27,7 +27,7 @@ Then start a new chat in either agent.
 - macOS or Linux. Windows is not supported yet.
 - Python 3.9 or newer as `python3` (on macOS: `xcode-select --install`), or set `aiBaton.python`.
 - The Claude Code and/or Codex VS Code extension, signed in.
-- For **Ask for review**: the project is a git repository, and the reviewing agent's command-line tool works with your account. A review uses that agent's plan.
+- For **Ask for review**: a git repository or a project set up with AI Baton (without git, the changes come from AI Baton's local snapshots), and the reviewing agent's command-line tool works with your account. A review uses that agent's plan.
 - Other agents (Copilot, Cline, Continue, ...) can be added to the panel. They do not save checkpoints yet; when you open one, AI Baton copies a request to load the shared context, which you paste into its chat.
 
 ## What AI Baton stores, reads and writes

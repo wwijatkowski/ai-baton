@@ -577,7 +577,7 @@ async function askForReview(preset) {
     : `${label(author)}'s summary from that conversation`;
   const value = await vscode.window.showInputBox({
     title: `Ask for review (3/3): anything to look at closely?`,
-    prompt: `${pick.agent.label} gets the current changes plus ${context} and the handoff, so it knows what they are for. ` +
+    prompt: `${pick.agent.label} gets the changes (or, if no files changed, the conversation's replies) plus ${context} and the handoff, so it knows what they are for. ` +
       'Press Enter to start, or name a focus.',
     placeHolder: 'Optional focus, e.g. performance, the new button, error handling',
     ignoreFocusOut: true,
@@ -590,7 +590,7 @@ async function askForReview(preset) {
   try {
     result = JSON.parse(await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification, cancellable: true,
-      title: `${pick.agent.label} is reviewing the changes… (usually 1-3 minutes)`,
+      title: `${pick.agent.label} is reviewing the work… (usually 1-3 minutes)`,
     }, (progress, token) => {
       token.onCancellationRequested(() => { cancelled = true; });
       // A little longer than the CLI's own 15-minute limit, so its clearer message wins.
@@ -614,7 +614,7 @@ async function askForReview(preset) {
   reviewDoc = doc;
 
   const target = session && st.agents.find((a) => a.id === author && a.installed && a.sessionUri);
-  const ask = `${pick.agent.label} reviewed the current changes. Check each point against the code and list which you ` +
+  const ask = `${pick.agent.label} reviewed ${reviewed}. Check each point against the code and list which you ` +
     `accept, reject or defer, and why, numbered like the review. Do not change anything yet. End with one line telling ` +
     `me how to answer: "ok" to apply the accepted points, or name the points to change (e.g. "ok, also 3, skip 4").\n\n${review}`;
   const send = target && `Send to ${target.label}`;

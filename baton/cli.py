@@ -71,7 +71,7 @@ def main(argv=None):
     p.add_argument('agent', help='built-in id, or JSON object: id, label, extension, openCommand, newCommand')
     p = sub.add_parser('remove-agent', help='remove an added agent or hide a built-in one')
     p.add_argument('id')
-    p = sub.add_parser('review', help='second opinion from another agent on the current changes (read-only)')
+    p = sub.add_parser('review', help='second opinion from another agent on recent work: changes (git or not) or replies (read-only)')
     p.add_argument('goal', nargs='?', help='what the change is meant to do')
     p.add_argument('--agent', required=True, help='reviewer, e.g. codex or claude')
     p.add_argument('--commit', help='review this commit instead of the uncommitted changes')

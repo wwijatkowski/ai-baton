@@ -44,6 +44,8 @@ Automated with the real agents: `sh tests/e2e_agents.sh` (Claude CLI and `codex 
 3. Cancel a running review. Expect: the notification closes quietly, no error; no stray reviewer or git process.
 4. In Claude say "ask Codex for a review of this change". Expect: Claude runs `baton review --agent codex ...`, lists its verdicts and waits for your ok.
 5. Expect: the review does not appear in Recent work and the agents' checkpoints are unchanged.
+6. Without git: in a folder with no `.git`, Initialize project, let an agent edit a file, then **Ask for review** on that conversation. Expect: "Reviewed: the changes since that conversation began" and the edit in the review.
+7. No file changes: pick a conversation that only answered a question (clean tree, no commit since). Expect: "Reviewed: <agent>'s replies in that conversation (no file changes)", not an older commit.
 
 ## 6. Usage and limits
 1. Expect: usage tiles and chart for this project and "All".

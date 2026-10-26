@@ -2,6 +2,12 @@
 
 Lasting project decisions, newest first. Format: `## YYYY-MM-DD: title`, followed by the decision, the reasoning and who decided.
 
+## 2026-10-26: Review works without git and reviews replies when no files changed
+- Decision: `baton review` picks its input by what the project has. Git: uncommitted changes; with a chosen conversation and a clean tree, the commits since it began (the commit of the checkpoint just before its first one), or its replies when there are none or its start is unknown; without a conversation, the last commit as before. No repository: the shadow snapshots against the files now, staged in a throwaway repo that borrows the shadow objects, with `* -filter` in its info/attributes so no git filter program runs and the shadow repo is only read. No git installed: the conversation's changed files (recorded lists plus files modified after its last checkpoint), for the reviewer to read. The output says what was reviewed.
+- Reasoning: many users do not work with git; "Review needs a git repository" and reviewing an unrelated older commit both misled. Codex review (accepted: unknown start, read-only shadow, incomplete file lists, cut-diff notes).
+- Deferred: the start of a conversation is inferred from the previous checkpoint, which is too late when another agent checkpoints during its first turn; recording it at the first prompt needs a hook change. The hooks' own shadow `add -A` can still run git filters.
+- Decided by: user (scope), Claude (design).
+
 ## 2026-10-25: Source-available under PolyForm Shield; preview on macOS and Linux, no telemetry
 - Decision: license AI Baton under PolyForm Shield 1.0.0 (`LICENSE`, copy in `vscode-extension/LICENSE`, `package.json` "SEE LICENSE IN LICENSE"); the GitHub repo goes public at publishing time. First Marketplace release is a free preview for macOS and Linux; Windows later. No telemetry at first: Marketplace statistics (installs, uninstalls, ratings) and GitHub show adoption.
 - Reasoning: the user wants wide free use (including at work) but no copy-paste competitors; MIT would allow that, closed code is visible in the .vsix anyway. Shield allows any use except building a competing product. Telemetry would undercut the "everything stays local" promise of a tool that reads agent logs.

@@ -663,6 +663,15 @@ class ReviewTest(unittest.TestCase):
         self.assertIsNotNone(stalled.poll())  # Killed by the watchdog.
         # A clean merge is reviewed against its first parent, so the merged-in change is visible.
         g = ['git', '-c', 'user.email=t@t', '-c', 'user.name=t']
+        # A cut diff of a conversation's commits still names their files.
+        start = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=self.project, capture_output=True, text=True).stdout.strip()
+        (self.project / 'two.txt').write_text('z' * 2000)
+        subprocess.run(['git', 'add', '-A'], cwd=self.project, check=True)
+        subprocess.run(g + ['commit', '-q', '-m', 'two'], cwd=self.project, check=True)
+        with mock.patch.object(review, 'MAX_DIFF', 300):
+            diff, what, notes = review.collect_diff(self.project, since=start)
+        self.assertIn('since that conversation began', what)
+        self.assertIn('two.txt', notes)
         subprocess.run(g + ['checkout', '-q', '-b', 'side'], cwd=self.project, check=True)
         (self.project / 'side.txt').write_text('from the side branch\n')
         subprocess.run(['git', 'add', 'side.txt'], cwd=self.project, check=True)
@@ -716,6 +725,101 @@ class ReviewTest(unittest.TestCase):
         for name in ('pid', 'child'):  # The reviewer and a process it started.
             with self.assertRaises(ProcessLookupError, msg=name):
                 os.kill(int((Path(self.tmp.name) / name).read_text()), 0)
+
+    def test_clean_tree_with_a_conversation_reviews_its_commits_or_its_replies(self):
+        g = ['git', '-c', 'user.email=t@t', '-c', 'user.name=t']
+        subprocess.run(['git', 'add', '-A'], cwd=self.project, check=True)
+        subprocess.run(g + ['commit', '-q', '-m', 'setup'], cwd=self.project, check=True)
+        # The first conversation has no checkpoint before it: its start is unknown, so no older commit stands in.
+        hook.run('codex', payload(self.project, 'Stop', 'c0', last_assistant_message='Codex looked around.'))
+        first = review.review(self.project, 'claude', session='c0')
+        self.assertEqual(first['reviewed'], "Codex's replies in that conversation (no file changes)")
+        self.assertIn('does not know where that conversation began', first['review'])
+        hook.run('claude', payload(self.project, 'Stop', 's1', last_assistant_message='Plan: move hooks to ~/.ai-baton.'))
+        # Nothing committed since the conversation began: its replies are the work, not some older commit.
+        planned = review.review(self.project, 'codex', session='s1')
+        self.assertEqual(planned['reviewed'], "Claude's replies in that conversation (no file changes)")
+        self.assertIn('<replies>', planned['review'])
+        self.assertIn('Plan: move hooks to ~/.ai-baton.', planned['review'])
+        self.assertNotIn('Codex looked around.', planned['review'].split('<replies>')[1])
+        # A commit made since then is reviewed as the conversation's work.
+        (self.project / 'done.txt').write_text('moved\n')
+        subprocess.run(['git', 'add', '-A'], cwd=self.project, check=True)
+        subprocess.run(g + ['commit', '-q', '-m', 'move'], cwd=self.project, check=True)
+        committed = review.review(self.project, 'codex', session='s1')
+        self.assertIn('commits since that conversation began', committed['reviewed'])
+        self.assertIn('done.txt', committed['review'])
+        # Without a chosen conversation a clean tree still means the last commit.
+        self.assertIn('last commit', review.review(self.project, 'codex')['reviewed'])
+
+    def test_project_without_a_repository_uses_the_shadow_snapshots(self):
+        plain = Path(self.tmp.name) / 'plain'
+        plain.mkdir()
+        (plain / 'notes.md').write_text('first draft\n')
+        init_project.init(plain)
+        hook.run('codex', payload(plain, 'Stop', 'c0', last_assistant_message='Codex wrote the draft.'))
+        (plain / 'notes.md').write_text('second draft\n')
+        hook.run('claude', payload(plain, 'Stop', 's1', last_assistant_message='Claude rewrote the notes.'))
+        (plain / 'later.md').write_text('after the checkpoint\n')
+        shadow = plain / '.agent-memory/shadow.git'
+        # Git may touch an existing object's time when it is reused; names and the index must not change.
+        stored = lambda: (sorted(str(f.relative_to(shadow)) for f in shadow.rglob('*') if f.is_file()),
+                          (shadow / 'index').read_bytes())
+        before = stored()
+        chosen = review.review(plain, 'codex', session='s1')
+        self.assertEqual(chosen['reviewed'], 'the changes since that conversation began')
+        self.assertIn('+second draft', chosen['review'])
+        self.assertIn('-first draft', chosen['review'])
+        self.assertIn('after the checkpoint', chosen['review'])  # Not yet in a checkpoint, still part of the work.
+        self.assertIn('no git repository', chosen['review'])
+        self.assertIn('--skip-git-repo-check', chosen['review'])
+        self.assertEqual(stored(), before)  # The shadow repo is only read: no new objects, its index untouched.
+        latest = review.review(plain, 'claude')
+        self.assertEqual(latest['reviewed'], 'the changes since the last checkpoint')
+        self.assertIn('after the checkpoint', latest['review'])
+        self.assertNotIn('second draft', latest['review'])
+        (plain / 'later.md').unlink()
+        self.assertEqual(review.review(plain, 'codex')['reviewed'], 'the changes at the last checkpoint')
+        hook.run('claude', payload(plain, 'Stop', 's2', last_assistant_message='Only explained the setup.'))
+        answered = review.review(plain, 'codex', session='s2')
+        self.assertIn('replies in that conversation', answered['reviewed'])
+        self.assertIn('Only explained the setup.', answered['review'])
+        with self.assertRaises(review.ReviewError):
+            review.review(plain, 'codex', commit='HEAD')
+        # Git filters from .gitattributes (external programs) never run while collecting.
+        marker = Path(self.tmp.name) / 'filter-ran'
+        config = Path(self.tmp.name) / 'gitconfig'
+        config.write_text(f'[filter "evil"]\n\tclean = "touch {marker}; cat"\n')
+        (plain / '.gitattributes').write_text('*.md filter=evil\n')
+        (plain / 'notes.md').write_text('third draft\n')
+        with mock.patch.dict(os.environ, {'GIT_CONFIG_GLOBAL': str(config)}):
+            self.assertIn('third draft', review.review(plain, 'codex')['review'])
+        self.assertFalse(marker.exists())
+        with self.assertRaises(review.ReviewError) as caught:
+            review.review(Path(self.tmp.name), 'codex')  # Neither a repository nor an AI Baton project.
+        self.assertIn('baton init', str(caught.exception))
+
+    def test_without_git_installed_the_changed_files_are_listed(self):
+        plain = Path(self.tmp.name) / 'nogit'
+        plain.mkdir()
+        init_project.init(plain)
+        real_which = shutil.which
+        no_git = lambda name, *a, **k: None if name == 'git' else real_which(name, *a, **k)
+        with mock.patch.object(shutil, 'which', no_git):
+            hook.run('codex', payload(plain, 'Stop', 'c0', last_assistant_message='Codex set up.'))
+            time.sleep(0.05)
+            (plain / 'recipe.txt').write_text('flour\n')
+            for i in range(60):
+                (plain / f'page{i:02}.txt').write_text('')
+            hook.run('claude', payload(plain, 'Stop', 's1', last_assistant_message='Claude added a recipe.'))
+            time.sleep(0.05)
+            (plain / 'after.txt').write_text('edited after the checkpoint\n')
+            result = review.review(plain, 'codex', session='s1')
+        self.assertIn('git is not installed', result['reviewed'])
+        self.assertIn('page59.txt', result['review'])
+        self.assertIn('after.txt', result['review'])  # Edited after the last checkpoint, still listed.
+        self.assertIn('Read them', result['review'])
+        self.assertIn('more changed files were not recorded by name', result['review'])
 
     def test_cancel_while_collecting_stops_git(self):
         import signal
