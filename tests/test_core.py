@@ -193,7 +193,8 @@ class HookTest(unittest.TestCase):
 
     def test_hook_with_an_empty_environment(self):
         # Codex starts Windows hooks with a cleared environment (no USERPROFILE, PATH, SYSTEMROOT): still a checkpoint.
-        result = subprocess.run([sys.executable, str(ROOT / 'bin/baton'), 'hook', 'codex'], env={},
+        # One unrelated variable: Python 3.9 on Windows cannot start a process with an entirely empty block.
+        result = subprocess.run([sys.executable, str(ROOT / 'bin/baton'), 'hook', 'codex'], env={'BATON_TEST': '1'},
                                 input=json.dumps(payload(self.project, 'Stop', 'bare', last_assistant_message='Done bare.')),
                                 capture_output=True, text=True, encoding='utf-8')
         self.assertEqual(result.returncode, 0, result.stderr)
