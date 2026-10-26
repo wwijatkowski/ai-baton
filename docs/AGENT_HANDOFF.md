@@ -37,7 +37,7 @@ AI Baton 0.4.0 (preview) is PUBLISHED on the VS Code Marketplace and Open VSX (`
 ## Next steps (in this order)
 Releasing: secrets VSCE_PAT and OVSX_PAT are set. Bump the version and add a CHANGELOG section in a PR, merge, then `git tag vX.Y.Z && git push origin vX.Y.Z`. `release.yml` then tests, publishes to both stores and creates the GitHub release; the stores show the new version about 5 minutes later.
 1. Now that Open VSX has the extension:
-   - The user removes the Reader member added to the Marketplace publisher for the namespace claim.
+   - Done 2026-10-26: the Reader member added to the Marketplace publisher for the namespace claim is removed.
    - Open VSX trusted publishing: registered 2026-10-26 (owner `wwijatkowski`, repo `ai-baton`, workflow `release.yml`, environment `release`); `release.yml` publishes with `--trusted-publishing` and falls back to OVSX_PAT with a warning. After the next release: if the publish job shows no fallback warning, remove the fallback step, then the user deletes the OVSX_PAT secret and the token on open-vsx.org.
 2. BEFORE 2026-12-01 (Azure DevOps retires global PATs, VSCE_PAT stops working): publish to the Marketplace without a PAT.
    - A user-assigned managed identity in the user's Azure subscription, with a federated credential for GitHub Actions, entity Environment `release`.
