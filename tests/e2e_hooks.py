@@ -42,6 +42,9 @@ def main():
         run = subprocess.run(command, cwd=project, env=env, capture_output=True, text=True, encoding='utf-8',
                              errors='replace', stdin=subprocess.DEVNULL, timeout=300)
         print(f'{name} exited {run.returncode} (no login, expected): {(run.stdout + run.stderr).strip()[-160:]}')
+        for line in (run.stdout + run.stderr).splitlines():
+            if 'hook' in line.lower():
+                print(f'  {name}: {line[:400]}')
 
     def seen(by):
         """{session: {agent: saved_at}}: what `by`'s hooks delivered to each of its conversations."""
@@ -103,6 +106,11 @@ def diagnose_codex(home, project, env):
                          errors='replace')
     print(f'hook command: {hook["command"]}\nrun as Codex does: exit {run.returncode}\n'
           f'stdout: {run.stdout[:300]}\nstderr: {run.stderr[-1500:]}')
+    # Codex clears the environment for hooks on Windows and replays only part of it.
+    bare = {k: v for k, v in env.items() if k.upper() in ('PATH', 'COMSPEC', 'HOME', 'USERPROFILE')}
+    run = subprocess.run(command, cwd=project, env=bare, input=payload, capture_output=True, text=True,
+                         encoding='utf-8', errors='replace')
+    print(f'with a bare environment: exit {run.returncode}\nstderr: {run.stderr[-800:]}')
     for rollout in (home / '.codex' / 'sessions').rglob('*.jsonl'):
         for line in rollout.read_text(encoding='utf-8', errors='replace').splitlines():
             if 'hook' in line.lower():

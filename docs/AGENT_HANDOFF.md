@@ -2,7 +2,7 @@
 
 A short, current state of the work for the next agent. Replace outdated content; do not keep history here (that is what Git and `docs/knowledge/` are for).
 
-**Last updated:** 2026-10-26 (evening), Claude
+**Last updated:** 2026-10-26 (evening, Open VSX namespace verified), Claude
 
 ## Current state
 AI Baton 0.3.0 (preview) is PUBLISHED on the VS Code Marketplace (`wwijatkowski.ai-baton`, 2026-10-26). The repo `github.com/wwijatkowski/ai-baton` is public.
@@ -10,7 +10,7 @@ AI Baton 0.3.0 (preview) is PUBLISHED on the VS Code Marketplace (`wwijatkowski.
 - Extension (`vscode-extension/`): agents, Recent work, Ask for review, usage and limits. The .vsix bundles the CLI and installs it to `~/.ai-baton` on activation (stable launcher `bin/baton` for hooks).
 - Tests: `python3 -m unittest discover -s tests` (56, plus extension flows and webviews in Node); CI on Linux, Windows and macOS for every push and PR. Real agents: `sh tests/e2e_agents.sh`. UI: `docs/MANUAL_TEST.md`, six rounds by Claude desktop in `docs/UI_TEST_REPORT.md`.
 - Package: `sh scripts/package.sh` builds `ai-baton-0.3.0.vsix` (gitignored) and checks its contents.
-- Publishing accounts: Marketplace publisher `wwijatkowski` (extension id `wwijatkowski.ai-baton`); Open VSX namespace `wwijatkowski` waits for EclipseFdn/open-vsx.org#14730. Repo history is clean (noreply author, no private project names); the full old history is in the private repo `ai-baton-history` and `~/ai-baton-full-history-2026-10-26.bundle`.
+- Publishing accounts: Marketplace publisher `wwijatkowski` (extension id `wwijatkowski.ai-baton`); Open VSX namespace `wwijatkowski` is verified (EclipseFdn/open-vsx.org#14730 closed 2026-10-26), Publisher Agreement signed, nothing published there yet. Repo history is clean (noreply author, no private project names); the full old history is in the private repo `ai-baton-history` and `~/ai-baton-full-history-2026-10-26.bundle`.
 
 ## Recently done (2026-10-26, branch `cross-platform-ci`, PR #1)
 - Windows support (native, not WSL), all verified in CI only:
@@ -37,8 +37,9 @@ AI Baton 0.3.0 (preview) is PUBLISHED on the VS Code Marketplace (`wwijatkowski.
 1. User: review and merge PR #1 (squash or merge), then delete the branch.
 2. Release 0.3.1 (or 0.4.0): bump the version, `sh scripts/package.sh`, upload on the Marketplace manage page; CHANGELOG has an Unreleased section.
 3. Manual check on a real Windows machine with the Claude and Codex extensions: hooks fire, Codex approves them, review works. The shell Codex uses for `commandWindows`/`command` on Windows is unverified.
-4. Publisher display name (waiting for VSMarketplace@microsoft.com), Open VSX after EclipseFdn/open-vsx.org#14730.
-5. Optional: announcement post.
+4. Open VSX publish (namespace ready). User: create a token at open-vsx.org → Access Tokens (never paste it into chat or the repo). Decide the version: A (recommended) merge PR #1, release 0.3.1 to Marketplace and Open VSX together; B rebuild 0.3.0 from `main` and publish it now (the local `ai-baton-0.3.0.vsix` from 15:48 may not match the Marketplace build). Publish: `npx ovsx publish ai-baton-<version>.vsix -p <TOKEN>` (user runs it). Later option: Trusted Publishers (GitHub Actions OIDC, no stored token). Afterwards the user removes the Reader member added to the Marketplace publisher for the claim.
+5. Publisher display name (waiting for VSMarketplace@microsoft.com).
+6. Optional: announcement post.
 
 ## How we work (user's preferences)
 - Reply in Polish; docs in English. Ask before outward or destructive actions (pushes to other repos, history rewrites, deleting memory).
