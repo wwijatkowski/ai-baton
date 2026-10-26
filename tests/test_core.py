@@ -1099,9 +1099,10 @@ class LicenseTest(unittest.TestCase):
             with mock.patch.dict(os.environ, {'BATON_LAUNCHER': launcher}):
                 command = baton_command()
             self.assertEqual(command, f'{Path(sys.executable).as_posix()} "C:/Users/Jan Kowalski/.ai-baton/bin/baton"')
-            for shell in (['powershell', '-NoProfile', '-Command'], ['cmd.exe', '/d', '/c']):
-                run = subprocess.run([*shell, f'{Path(sys.executable).as_posix()} -c "print(41 + 1)"'],
-                                     capture_output=True, text=True)
+            line = f'{Path(sys.executable).as_posix()} -c "print(41 + 1)"'
+            # As Codex starts them: its PowerShell, or `cmd.exe /C "<line>"` (a raw command line) when none is found.
+            for shell in (['powershell', '-NoProfile', '-Command', line], f'cmd.exe /C "{line}"'):
+                run = subprocess.run(shell, capture_output=True, text=True)
                 self.assertEqual(run.stdout.strip(), '42', (shell, run.stderr))
             with mock.patch.object(project, 'short_path', lambda p: 'C:/Program Files/Python/python.exe'):
                 self.assertTrue(baton_command().startswith('& "C:/Program Files/Python/python.exe" '))
