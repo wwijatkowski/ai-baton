@@ -150,6 +150,17 @@ def diagnose_codex(home, project, env):
     """What went wrong: the hook command run the way Codex runs it, and what Codex recorded about its hooks."""
     for result in hook_results(shutil.which('codex'), project, env):
         print('Codex hook result:', result)
+    # Codex drops a failed hook's stderr: run the same command with stderr in stdout and a zero exit code, so its
+    # output comes back as context text.
+    hook0 = json.loads((home / '.codex' / 'hooks.json').read_text(encoding='utf-8'))['hooks']['SessionStart'][0]['hooks'][0]
+    tail = ' 2>&1 & exit 0' if os.name == 'nt' else ' 2>&1; exit 0'
+    config = json.loads((home / '.codex' / 'hooks.json').read_text(encoding='utf-8'))
+    config['hooks']['SessionStart'] = [{'hooks': [{**hook0, 'command': hook0['command'] + tail}]}]
+    (home / '.codex' / 'hooks.json').write_text(json.dumps(config), encoding='utf-8')
+    from baton import hookcheck
+    approve(home, hookcheck.codex_hooks(shutil.which('codex'), project))
+    for result in hook_results(shutil.which('codex'), project, env):
+        print('With stderr shown:', result)
     hook = json.loads((home / '.codex' / 'hooks.json').read_text(encoding='utf-8'))['hooks']['SessionStart'][0]['hooks'][0]
     payload = json.dumps({'cwd': str(project), 'hook_event_name': 'SessionStart', 'session_id': 'diagnose'})
     # Codex: `%COMSPEC% /C "<command>"` on Windows, `$SHELL -lc <command>` elsewhere.
