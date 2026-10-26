@@ -39,12 +39,13 @@ Releasing: secrets VSCE_PAT and OVSX_PAT are set. Bump the version and add a CHA
 1. Now that Open VSX has the extension:
    - Done 2026-10-26: the Reader member added to the Marketplace publisher for the namespace claim is removed.
    - Open VSX trusted publishing: registered 2026-10-26 (owner `wwijatkowski`, repo `ai-baton`, workflow `release.yml`, environment `release`); `release.yml` publishes with `--trusted-publishing` and falls back to OVSX_PAT with a warning. After the next release: if the publish job shows no fallback warning, remove the fallback step, then the user deletes the OVSX_PAT secret and the token on open-vsx.org.
-2. BEFORE 2026-12-01 (Azure DevOps retires global PATs, VSCE_PAT stops working): publish to the Marketplace without a PAT.
-   - A user-assigned managed identity in the user's Azure subscription, with a federated credential for GitHub Actions, entity Environment `release`.
+2. Marketplace without a PAT (global PATs stop working on 2026-12-01). Set up 2026-10-26:
+   - Managed identity `ai-baton-release` in resource group `ai-baton-release` (West Europe, user's subscription).
+   - Federated credential subject `repo:wwijatkowski@37709252/ai-baton@1434103333:environment:release`. GitHub now sends owner and repo with their numeric ids; the plain `repo:wwijatkowski/ai-baton:...` form did not match.
    - Secrets `AZURE_CLIENT_ID` and `AZURE_TENANT_ID`.
-   - Get the identity's Azure DevOps profile id once (`az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me --resource 499b84ac-1321-427f-aa17-267ca6975798` while logged in as the identity, e.g. a temporary workflow_dispatch job). The user adds that id as Contributor in the publisher's Members.
-   - Workflow: `azure/login@v2` (allow-no-subscriptions), then `vsce publish --azure-credential`. An app registration fails with "operation is not allowed"; it must be a managed identity.
-   - Guide: emrecodes.net/posts/2026/07/10/vscode-marketplace-managed-identity.html
+   - The identity's Azure DevOps id `871d2ee6-b125-6f1a-b920-3940cbfd884f` is added by the user as Contributor of publisher wwijatkowski.
+   - `release.yml` signs in with `azure/login@v2` and publishes with `--azure-credential`, falling back to VSCE_PAT with a warning.
+   After the first release without the warning (or once verified by the identity check), remove the fallback step; the user deletes VSCE_PAT and the Azure DevOps token.
 3. Optional: a manual look at the VS Code panel on Windows. CI covers the CLIs, hooks and the extension host, not the rendered webview.
 4. Publisher display name (waiting for VSMarketplace@microsoft.com). Optional: announcement post.
 
