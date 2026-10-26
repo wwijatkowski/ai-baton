@@ -2,34 +2,34 @@
 
 A short, current state of the work for the next agent. Replace outdated content; do not keep history here (that is what Git and `docs/knowledge/` are for).
 
-**Last updated:** 2026-10-25, Claude
+**Last updated:** 2026-10-26, Claude
 
 ## Current state
-v1 works and runs on this repo: CLI, global memory hooks (Claude, Codex), tiered memory, VS Code panel (agents, Recent work, review, usage, limits). 40 unit tests pass (`python3 -m unittest discover -s tests`, includes the webview render test); `sh tests/e2e_agents.sh` checks shared memory with the real agents (uses plan tokens). Four UI test rounds by Claude desktop are in `docs/UI_TEST_REPORT.md` (round 4: all PASS); the manual plan is `docs/MANUAL_TEST.md`.
+AI Baton 0.3.0 (preview) is ready to publish, pending a real-install check. Everything below is committed and pushed to the private repo `github.com/wwijatkowski/ai-baton`.
+- CLI (`baton/`, Python 3.9+, stdlib only): global memory hooks for Claude and Codex, tiered memory, `review`, `recent`, `hook-status`, `install-hooks`, `uninstall-hooks`.
+- Extension (`vscode-extension/`): agents, Recent work, Ask for review, usage and limits. The .vsix bundles the CLI and installs it to `~/.ai-baton` on activation (stable launcher `bin/baton` for hooks).
+- Tests: `python3 -m unittest discover -s tests` (51, pass on Python 3.11 and the macOS system 3.9). Real agents: `sh tests/e2e_agents.sh`. UI: `docs/MANUAL_TEST.md`, four rounds by Claude desktop in `docs/UI_TEST_REPORT.md`.
+- Package: `sh scripts/package.sh` builds `ai-baton-0.3.0.vsix` (gitignored) and checks its contents.
+- Publishing accounts: Marketplace publisher `wwijatkowski` (extension id `wwijatkowski.ai-baton`); Open VSX namespace `wwijatkowski` waits for EclipseFdn/open-vsx.org#14730. Repo history is clean (noreply author, no private project names); the full old history is in the private repo `ai-baton-history` and `~/ai-baton-full-history-2026-10-26.bundle`.
 
 ## Recently done (2026-10-26)
-- Fixed a real outage: several sessions stopping at once interleaved gzip writes and damaged `.agent-memory/history.archive.jsonl.gz`, and one bad member crashed `status` (the panel). `append_history` now runs under `fcntl.flock` (`.agent-memory/.history.lock`) and writes `history.jsonl` atomically; `recall.archive_lines` reads member by member and skips damaged parts. A 12-process test loses nothing (without the lock: 86 of 180 unique). On this machine 71 archived checkpoints are readable; the damaged ones are skipped (file left as is).
-- README corrected after two Codex review rounds (stored replies and shadow snapshots, what init changes, other agents' checkpoints only, full file list, review prerequisites and manual paste, checkpointed sessions, uninstall steps that keep the user's own docs, license wording). New `baton uninstall-hooks [--agents] [--project]`: validates every file first, removes only exact AI Baton hook commands (`init_project.BATON_HOOK_RE`; look-alikes stay).
-- Clean public-ready history: `github.com/wwijatkowski/ai-baton` (private until publishing) starts from one commit authored with the GitHub noreply address; private project names removed from the docs. The full earlier history is in the private repo `ai-baton-history` (up to fe7cd12), locally on branch `history-main` (remote `history`), and in `~/ai-baton-full-history-2026-10-26.bundle`. Local git config uses the noreply address; GitHub blocks pushes that expose the private e-mail.
+- Fixed an outage: concurrent Stop hooks damaged the gzip history archive and crashed the panel. History writes are locked (`.agent-memory/.history.lock`), the archive reader skips damaged members.
+- README for the Marketplace corrected after two Codex reviews (what is stored and written, review prerequisites, uninstall steps that keep the user's docs, license wording). `baton uninstall-hooks` removes only exact AI Baton hook commands.
 
-## Earlier (2026-10-25)
-- Packaging for the Marketplace preview (0.3.0, `preview: true`): `scripts/package.sh` builds the .vsix; `vscode:prepublish` runs `scripts/bundle-cli.sh`, so the CLI is always inside; the script checks the package contents. On activation `cli-install.js` installs it to `~/.ai-baton`: `versions/<v>` copied beside then renamed, `current` symlink switched by rename, stable launcher `bin/baton` (hooks call it; it pins one version per process), install lock with owner pid, previous version kept. `aiBaton.home` empty by default (set it to a checkout for development; falls back to `~/ai-baton`). One `initialize()` checks the CLI and Python >= 3.9 (macOS system Python is 3.9.6) at start and on `aiBaton.home`/`aiBaton.python` changes; separate messages for install and Python problems. Hook command: `python3` when that is the running interpreter, else its full path; script path kept as "...", strictly quoted only with shell characters. `init`/`install-hooks` default to agents whose program is found (`project.agent_binary`). Fresh install simulated from the .vsix with a temp HOME and Python 3.9: install, hooks, init, a real hook run, recent: all fine. Two Codex review rounds, all points applied except a version grace period and mocked VS Code tests (roadmap item 4). 43 tests pass on Python 3.11 and 3.9.
-- License: PolyForm Shield 1.0.0 (`LICENSE`, copy in `vscode-extension/`, kept identical by a test), short root `README.md`, `package.json` repository URL. Publishing plan is roadmap item 1.
-- UI test round 4: clean, all PASS (the whose-work picker tells "VS Code" from "Claude desktop"; the full review loop worked). Codex review of round 3, applied after the user's ok: the client label is read per agent (a Codex started inside Claude inherits `CLAUDE_CODE_ENTRYPOINT`); Handoff blocks and agent-card summaries are cut on a word too; a new review opens in the group that still holds the previous one, else beside. Mocked VS Code test deferred (roadmap item 3).
-- UI test round 3 (`docs/UI_TEST_REPORT.md`): 10 PASS, 1 FAIL; Send to now reaches the user's own conversation. Fixed after the user's ok: summaries are cut on a word when the checkpoint is saved (`project.clip`, shared with status); checkpoints record the client (`client`: Claude's `CLAUDE_CODE_ENTRYPOINT`, e.g. claude-vscode / claude-desktop; Codex's transcript `originator`, e.g. codex_vscode / codex_exec), shown in the "whose work?" picker; headings stripped anywhere in summaries; reviews reuse one editor column. All five pre-guard reviewer entries removed from history.jsonl and `codex.json` restored to Codex's real 16:29 checkpoint, with the user's ok (backup in the session scratchpad). 40 tests pass.
-- `baton review` + panel **Ask for review**: 1/3 whose work (conversation from the full history, or none), 2/3 reviewer (Codex or Claude, headless and read-only), 3/3 optional focus. The reviewer gets the diff (uncommitted, else last commit, or `--commit`), the chosen session's summary and the handoff, and a ranked-critique prompt. The result opens beside; **Send to <author>** copies it with "list accept/reject/defer, change nothing until the user says ok" and opens that conversation (paste needed: Claude ignores prompt links for open sessions). Recent work entries have their own Ask for review. Reviewer sessions run with `BATON_REVIEW=1` so their hooks write nothing. Hardened over several Codex/Claude review rounds (process-group cancel, bounded collection with an overall deadline, nested repos, merges vs first parent, odd filenames, unborn HEAD).
-- Agents propose after a review and wait for the user's ok (AGENTS.md rule, init template, Send-to text).
-- "Working" ends with the turn: Codex `task_complete`/`turn_aborted` in the transcript, else Stop, else 45 min.
-- Global hooks (`baton install-hooks`), hook health in the panel (`baton hook-status`, Codex trust from its app-server), Recent work with Open session (Claude and Codex verified), live Find agents, stale-aware limits. Details: `docs/knowledge/DECISIONS.md`.
+## Next steps (in this order)
+1. User installs the real package: uninstall the old dev copy "AI Baton" (`wiktor.ai-baton`), then Extensions: Install from VSIX… `~/ai-baton/ai-baton-0.3.0.vsix`, then Developer: Reload Window. Expect `~/.ai-baton/` to appear (bin, current, versions) and the panel to work. The user's hooks still point at `~/ai-baton` (this checkout); fine for now.
+2. UI test round 5 in Claude desktop on the installed package, including Initialize project in a fresh git folder (`docs/MANUAL_TEST.md` sections 1, 4, 5b). Fix what it finds before screenshots.
+3. User takes 3 screenshots into `vscode-extension/media/screenshots/` (panel with agents and Recent work; the "whose work?" picker; a review tab with the Send-to notification); add them to the README.
+4. Publish: make `ai-baton` public; upload the .vsix on marketplace.visualstudio.com/manage (or `vsce publish --azure-credential` after `az login`, untested); Open VSX after #14730 closes.
+
+## How we work (user's preferences)
+- Reply in Polish; docs in English. Ask before outward or destructive actions (pushes to other repos, history rewrites, deleting memory).
+- After significant changes run `baton review --agent codex` (diff + ranked critique), check each point, list accept/reject/defer, and wait for the user's "ok" before changing code.
+- Never name the user's private projects in this repo; commits use the noreply address set in the repo's git config.
+- Start a new chat when a conversation gets long: the previous one reached about 780k tokens of context, and each turn re-read it.
 
 ## Open issues / risks
-- Not yet seen in the real UI: Add agent with a third-party agent installed; stale (over 60 min) limits since round 1.
-- No tests for `extension.js` flows (roadmap item 3).
+- Linux and Windows untested (no Docker here); preview targets macOS and Linux.
+- No tests for `extension.js` flows (roadmap item 5).
 - Activity is one entry per agent: two sessions of the same agent overwrite each other's working state.
-- `recent_work` reads the whole history archive on every refresh (fine at 40 KB).
-- Projects set up before the global hooks still carry project hooks with an absolute path; harmless (global hooks defer), remove later with the user's consent.
-
-## Next step
-- Publisher is `wwijatkowski` (extension id `wwijatkowski.ai-baton`). The dev copy installed on this machine is the old id `wiktor.ai-baton` (folder `~/.vscode/extensions/wiktor.ai-baton-0.2.0`): uninstall it before installing the .vsix. User is setting up Open VSX (Eclipse) meanwhile.
-- Done for publishing: Marketplace README (`vscode-extension/README.md`), icon (`media/icon.png` from `icon.svg`), CHANGELOG, keywords and banner; history scan found no secrets (all commits carry the user's personal e-mail as author: user decides); this repo's project hooks removed (global hooks verified).
-- Next: user screenshots or GIF for the README; install the .vsix in VS Code (uninstall `wiktor.ai-baton` first) and run a UI round; then publish.
+- Codex was briefly "at capacity" during a review; `baton review` reports such failures as errors.
