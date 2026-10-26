@@ -248,6 +248,7 @@ def run(agent, payload, user_level=False):
         set_activity(mem, agent, 'idle', session_id)
         return {}
     if event in ('SessionStart', 'UserPromptSubmit'):
+        changes.baseline(root, mem)  # Projects set up before baselines existed get one before this turn.
         if event == 'UserPromptSubmit':
             set_activity(mem, agent, 'working', session_id, payload.get('transcript_path'))
         context = build_context(mem, root, agent, event, session_id)

@@ -363,6 +363,7 @@ class MemoryTiersTest(unittest.TestCase):
     def test_git_project_points_at_commit(self):
         run = lambda *a: subprocess.run(['git', *a], cwd=self.project, check=True, capture_output=True)
         run('init', '-q')
+        shutil.rmtree(self.project / '.agent-memory' / changes.SHADOW_DIR)  # Init's baseline, taken before git existed.
         run('-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '-A')
         run('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'x')
         found = self.stop('claude', 'Done.')['changes']
@@ -798,6 +799,65 @@ class ReviewTest(unittest.TestCase):
         with self.assertRaises(review.ReviewError) as caught:
             review.review(Path(self.tmp.name), 'codex')  # Neither a repository nor an AI Baton project.
         self.assertIn('baton init', str(caught.exception))
+
+    def test_first_conversation_without_a_repository_is_reviewed_as_a_change(self):
+        # UI round 5, D6: a fresh folder without git, one conversation that creates a file.
+        fresh = Path(self.tmp.name) / 'fresh-nogit'
+        fresh.mkdir()
+        log = init_project.init(fresh)
+        self.assertTrue(any('first snapshot' in line for line in log))
+        hook.run('claude', payload(fresh, 'UserPromptSubmit', 's1', prompt='create notes.txt'))
+        (fresh / 'notes.txt').write_text('hello from round 5\n')
+        hook.run('claude', payload(fresh, 'Stop', 's1', last_assistant_message='Created notes.txt.'))
+        result = review.review(fresh, 'codex', session='s1')
+        self.assertEqual(result['reviewed'], 'the changes since that conversation began')
+        self.assertIn('+hello from round 5', result['review'])
+        self.assertNotIn('+# AGENTS', result['review'])  # Init's own files are in the baseline, not the change.
+        # A project set up before baselines existed gets one at the next prompt, before the agent works.
+        older = Path(self.tmp.name) / 'older-nogit'
+        older.mkdir()
+        init_project.init(older)
+        shutil.rmtree(older / '.agent-memory' / changes.SHADOW_DIR)
+        hook.run('codex', payload(older, 'UserPromptSubmit', 'c1', prompt='go'))
+        self.assertTrue((older / '.agent-memory' / changes.SHADOW_DIR).is_dir())
+        # Out of time or interrupted (an empty shadow repo): no baseline now, a retry at the next prompt.
+        shutil.rmtree(older / '.agent-memory' / changes.SHADOW_DIR)
+        with mock.patch.object(changes, 'BASELINE_BUDGET', 0):
+            hook.run('codex', payload(older, 'UserPromptSubmit', 'c1', prompt='go'))
+        shadow = older / '.agent-memory' / changes.SHADOW_DIR
+        subprocess.run(['git', 'init', '-q', '--bare', str(shadow)], check=True)
+        hook.run('codex', payload(older, 'UserPromptSubmit', 'c1', prompt='go'))
+        self.assertTrue(changes.git(older, 'rev-parse', '--verify', changes.BASELINE_REF, git_dir=shadow))
+        # Snapshots never run git filters (external programs) from the project's .gitattributes.
+        marker = Path(self.tmp.name) / 'filter-ran'
+        config = Path(self.tmp.name) / 'gitconfig'
+        config.write_text(f'[filter "evil"]\n\tclean = "touch {marker}; cat"\n')
+        filtered = Path(self.tmp.name) / 'filtered-nogit'
+        filtered.mkdir()
+        (filtered / '.gitattributes').write_text('* filter=evil\n')
+        with mock.patch.dict(os.environ, {'GIT_CONFIG_GLOBAL': str(config)}):
+            init_project.init(filtered)
+            (filtered / 'a.txt').write_text('a\n')
+            hook.run('claude', payload(filtered, 'Stop', 's1', last_assistant_message='Added a.txt.'))
+        self.assertFalse(marker.exists())
+        # A first commit that is not a marked baseline (projects from before baselines) is never taken as one.
+        legacy = Path(self.tmp.name) / 'legacy-nogit'
+        legacy.mkdir()
+        init_project.init(legacy)
+        shutil.rmtree(legacy / '.agent-memory' / changes.SHADOW_DIR)
+        hook.run('codex', payload(legacy, 'Stop', 'c0', last_assistant_message='Codex did earlier work.'))
+        (legacy / 'mine.txt').write_text('mine\n')
+        hook.run('claude', payload(legacy, 'Stop', 's1', last_assistant_message='Claude added mine.txt.'))
+        lost = Path(self.tmp.name) / 'lost'
+        (legacy / '.agent-memory' / 'history.jsonl').rename(lost)  # The checkpoint before s1 is gone.
+        (legacy / '.agent-memory' / 'history.jsonl').write_text(lost.read_text().splitlines()[-1] + '\n')
+        unknown = review.review(legacy, 'codex', session='s1')
+        self.assertIn('replies in that conversation', unknown['reviewed'])
+        self.assertIn('does not know where that conversation began', unknown['review'])
+        # Git projects never get a shadow repo from the prompt hook.
+        self.assertFalse((self.project / '.agent-memory' / changes.SHADOW_DIR).exists())
+        hook.run('claude', payload(self.project, 'UserPromptSubmit', 's9', prompt='go'))
+        self.assertFalse((self.project / '.agent-memory' / changes.SHADOW_DIR).exists())
 
     def test_without_git_installed_the_changed_files_are_listed(self):
         plain = Path(self.tmp.name) / 'nogit'

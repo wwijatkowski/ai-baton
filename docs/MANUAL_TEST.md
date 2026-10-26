@@ -4,12 +4,13 @@ End-to-end check of AI Baton in the real VS Code UI. Unit tests (`python3 -m uni
 
 ## 0. Setup
 1. Package with `sh scripts/package.sh` and install the `.vsix` (Extensions: Install from VSIX…), then **Developer: Reload Window**. The extension id is `wwijatkowski.ai-baton`; uninstall the old development copy `wiktor.ai-baton` first.
-2. Create an empty test folder (e.g. `~/baton-test`) with `git init`, open it in a new VS Code window.
+2. Create an empty test folder (e.g. `~/baton-test`) with `git init`, open it in a new VS Code window. A new folder opens in Restricted Mode: trust it, otherwise AI Baton is off and its icon is missing.
 
 ## 1. New project
 1. Open the AI Baton panel. Expect: "This folder is not connected yet" and **Initialize project**; agent cards only for installed agents (Claude, Codex).
-2. Click **Initialize project**. Expect: no prompt to install hooks (already global on this machine); AGENTS.md, CLAUDE.md, docs/ created; **no** `.claude/` or `.codex/` folder in the project.
+2. Click **Initialize project**. Expect: a "Setting up …" notification, then the panel switches to the project view; no prompt to install hooks (already global on this machine); AGENTS.md, CLAUDE.md, docs/ created; **no** `.claude/` or `.codex/` folder in the project.
 3. Expect on the Codex card: nothing if the global Codex hooks are approved, otherwise a yellow warning with **Approve in Codex**.
+4. **New chat** on the Claude card before any Claude view was opened in this window. Expect: a new Claude conversation opens in an editor tab.
 
 ## 2. Hook approval (Codex)
 1. If the warning shows, click **Approve in Codex**. Expect: Codex opens; a message explains the hooks button next to the model picker.
@@ -53,4 +54,7 @@ Automated with the real agents: `sh tests/e2e_agents.sh` (Claude CLI and `codex 
 3. Model and effort pickers: change Codex's model, start a new Codex chat. Expect: it uses the chosen model.
 
 ## 7. Clean up
-Delete the test folder. Global hooks stay (they do nothing outside AI Baton projects).
+Always the last step of a test round, after the report is written:
+1. Close the VS Code windows opened for the test (do not save the Untitled review tabs; their content is in the report).
+2. Delete every test folder created in the round (e.g. `~/baton-test*`), and nothing else.
+3. Note in the report's "State left behind" what was removed. Global hooks stay (they do nothing outside AI Baton projects).

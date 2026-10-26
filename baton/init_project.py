@@ -3,7 +3,9 @@ import re
 from datetime import date
 from pathlib import Path
 
-from .project import HOME, MARKER, MEMORY_DIR, agent_binary, baton_command, load_agents, read_json, write_json
+from . import changes
+from .project import (HOME, MARKER, MEMORY_DIR, agent_binary, baton_command, load_agents, memory_dir, read_json,
+                      write_json)
 
 TEMPLATES = HOME / 'baton' / 'templates'
 BLOCK_RE = re.compile(r'<!-- BEGIN AI-BATON -->.*?<!-- END AI-BATON -->', re.S)
@@ -226,4 +228,7 @@ def init(root, replace_legacy=False, only=None):
     for agent in agents:
         merge_hooks(root, agent['hooks'], replace_legacy, log)
     ensure_gitignore(root, log)
+    # No repository: a first snapshot now, so the first conversation's changes can be reviewed (review.py).
+    if changes.baseline(root, memory_dir(root)):
+        log.append(f'+ {MEMORY_DIR}/{changes.SHADOW_DIR}: first snapshot of the files (no git repository)')
     return log

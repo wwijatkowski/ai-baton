@@ -16,8 +16,8 @@
 ## Getting started
 
 1. Install AI Baton and at least one of [Claude Code](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code) or [Codex](https://marketplace.visualstudio.com/items?itemName=openai.chatgpt).
-2. Open a project folder and click the baton icon in the activity bar.
-3. Click **Initialize project**. AI Baton offers to install its memory hooks once for all projects. In the project it creates `docs/` and `.baton.json`, creates `AGENTS.md` and `CLAUDE.md` or adds an AI Baton section to existing ones (your text stays), and adds `.agent-memory/` to `.gitignore`.
+2. Open a project folder and click the baton icon in the activity bar. If VS Code opened the folder in Restricted Mode, trust it first: AI Baton runs local commands, so it stays off (no icon) in untrusted folders.
+3. Click **Initialize project**. AI Baton offers to install its memory hooks once for all projects. In the project it creates `docs/` and `.baton.json`, creates `AGENTS.md` and `CLAUDE.md` or adds an AI Baton section to existing ones (your text stays), and adds `.agent-memory/` to `.gitignore`. Without git, it also takes a first private snapshot of the files in `.agent-memory/`, so reviews can show what an agent changed.
 4. Codex only: approve the hooks once. In the Codex chat box, click the hooks button next to the model picker ("Review hooks"), then **Allow all**. The panel shows a reminder until you do.
 
 Then start a new chat in either agent.

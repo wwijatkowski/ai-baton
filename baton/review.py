@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 from . import changes
-from .changes import SHADOW_CONFIG, SHADOW_DIR
+from .changes import BASELINE_REF, SHADOW_CONFIG, SHADOW_DIR
 from .project import MEMORY_DIR, agent_binary, find_root, load_agents, read_json
 from .recall import entries
 
@@ -201,16 +201,24 @@ def collect(root, commit, reviewer, since=None):
     return diff, 'the last commit (there are no uncommitted changes)', cut_note
 
 
-def collect_shadow(project, since=None):
+def collect_shadow(project, since=None, first=None):
     """No repository: the files now against AI Baton's private snapshot from `since` (the start of a chosen
-    conversation; '' when not known), else the last checkpoint. The shadow repo is only read: the files are staged in
-    a throwaway repository that borrows its objects, with git filters (`.gitattributes`) switched off."""
+    conversation; '' when not known), else the last checkpoint. When the start is not known, the baseline snapshot
+    (BASELINE_REF, taken by `baton init` or the first prompt) stands in, unless it is `first`, the conversation's own
+    checkpoint. The shadow repo is only read: the files are staged in a throwaway repository that borrows its
+    objects, with git filters (`.gitattributes`) switched off."""
     shadow = project / MEMORY_DIR / SHADOW_DIR
     prefix = ('--git-dir', str(shadow), '--work-tree', str(project), *SHADOW_CONFIG)
     head = git(project, 'rev-parse', '--verify', '--quiet', 'HEAD', ok=(0, 1), prefix=prefix).strip()
     if not head:
         return '', 'nothing', ''
-    base = since and git(project, 'rev-parse', '--verify', '--quiet', since + '^{commit}', ok=(0, 1), prefix=prefix).strip()
+    resolve = lambda ref: ref and git(project, 'rev-parse', '--verify', '--quiet', ref + '^{commit}', ok=(0, 1),
+                                      prefix=prefix).strip()
+    base = resolve(since)
+    if since is not None and not base:
+        marked = resolve(BASELINE_REF)  # Only a real baseline; any other first commit may be someone's work.
+        if marked and marked != resolve(first):
+            base = marked
     if since is not None and not base:
         return '', 'nothing', ('AI Baton does not know where that conversation began, so its file changes cannot be '
                                'told apart from earlier work.')
@@ -429,7 +437,8 @@ def reviewed(start, agent, goal, commit, focus, session):
         root = project
         if shutil.which('git') and (project / MEMORY_DIR / SHADOW_DIR).is_dir():
             since = ((started.get('kind') == 'shadow' and started.get('commit')) or '') if session else None
-            diff, what, notes = collect_shadow(project, since)
+            first = next((s['changes'].get('commit') for s in snaps if (s.get('changes') or {}).get('kind') == 'shadow'), None)
+            diff, what, notes = collect_shadow(project, since, first)
         else:
             diff, what, notes = collect_files(project, snaps)
     if not diff.strip():

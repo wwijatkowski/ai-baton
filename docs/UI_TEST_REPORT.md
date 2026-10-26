@@ -274,3 +274,168 @@ The user's conversation ("VS Code") and the tester's ("Claude desktop") can now 
 ## State left behind (round 4)
 
 These editor tabs are open: "Recent work" (column 1); "# Review by Codex" (Untitled-1), "# Review by Claude" (Untitled-2) and "Extension: Amazon Q" (column 2). The "Claude's review is ready… Send to Codex" notification is still showing. The clipboard holds the Codex review prompt. The only file edited is this report.
+
+---
+
+# Round 5: installed package
+
+Date: 2026-10-26, 11:39–12:00 local. Tested by Claude (Claude desktop, computer use, VS Code at "click only" level) on the installed package `wwijatkowski.ai-baton` 0.3.0 from the .vsix, CLI in `~/.ai-baton` (0.3.0), and hooks calling `~/.ai-baton/bin/baton`. The user trusted the two new folders, approved the Codex hooks, pressed Enter four times and gave Claude two prompts in `~/baton-test-nogit`. Nothing was installed or committed, VS Code settings and hooks were not changed, and nothing was sent to an agent (Send to Claude was clicked once, nothing pasted). Test folders: `~/baton-test` (git, no commits) and `~/baton-test-nogit` (no git), left in place.
+
+## Summary
+
+| # | Check | Result |
+|---|-------|--------|
+| A1 | New git folder: panel shows "not connected" and Initialize project | PASS |
+| A2 | Initialize: AGENTS.md, CLAUDE.md, docs/; no .claude/ or .codex/; no hook prompt | PASS |
+| A3 | Codex card warns about unapproved hooks | PASS |
+| B1 | Approve in Codex opens Codex and explains the hooks button | PASS |
+| B2 | After Allow all (user) and refresh, the warning is gone | PASS |
+| C1 | Recent work (~/ai-baton): entries, no "false" / "undefined" / "[object" | PASS |
+| C2 | Entry details and buttons | PASS |
+| C3 | Open session (Claude) | PASS |
+| C4 | Open session (Codex) | PASS |
+| C5 | Open in editor…: tab beside, by day, agent filter | PASS |
+| D1 | Ask for review of an uncommitted change (git) | PASS (about 28 s) |
+| D3 | Cancel a running review | PASS |
+| D5 | Review leaves no Recent work entry or checkpoint | PASS |
+| D6 | No git: review of the conversation that edited a file | FAIL |
+| D7 | No file changes: review of a question-only conversation | PASS (about 30 s; tested in the no-git folder) |
+| D2 | Send to Claude opens the chosen conversation | PASS (nothing pasted) |
+| E | ~/ai-baton panel: cards, usage, limits, no errors | PASS |
+| X | "New chat" on the Claude card in a window where Claude is not open yet | FAIL |
+
+## Details
+
+**A1 PASS.** Folder `~/baton-test` with `git init` (no commits), opened via `open -a "Visual Studio Code"`. It first opened in **Restricted Mode** ("Restricted Mode is intended for safe code browsing. Trust this folder to enable all features."), and the AI Baton icon was missing until the user trusted the folder. Then the panel showed "baton-test", "This folder is not connected yet. Initializing adds AGENTS.md, CLAUDE.md, docs/ and memory hooks. Existing files stay unchanged.", **Initialize project**, and cards for Claude and Codex (models, Open / New chat / Remove).
+
+**A2 PASS.** Dialog: "Set up baton-test for AI Baton? This adds AGENTS.md, CLAUDE.md, docs/ and memory hooks. Existing files are not overwritten." (Cancel / Initialize). It did not ask about installing hooks. Created: `.baton.json`, `.gitignore` (`.agent-memory/`), `AGENTS.md`, `CLAUDE.md`, `docs/AGENT_HANDOFF.md`, `docs/STATUS.md`, `docs/knowledge/`. No `.claude/` or `.codex/`. The Output channel ended "Done. Restart agent sessions in this folder.", and the toast said "Project ready. Start a new Claude conversation. In Codex, approve the 3 hooks once: hooks button next to the model picker, then Allow all."
+
+**A3 PASS.** Codex card: "No checkpoint" and a yellow box "Codex has not approved the memory hooks yet, so it does not share memory." with **Approve in Codex**. `baton hook-status ~/baton-test` printed `codex untrusted not approved yet: in Codex click the hooks button next to the model picker (Review hooks), then Allow all`. The Claude card had no warning.
+
+**B1 PASS.** Approve in Codex switched the secondary side bar to the Codex tab (a few seconds of blank logo, then the Codex chat list) and showed: "In Codex, click the hooks button next to the model picker ("Review hooks · 3 need approval") and choose Allow all. This is needed once per computer."
+
+**B2 PASS.** After the user's Allow all, `baton hook-status` printed `codex ok approved (user)`. After the panel's refresh button, the yellow box was gone.
+
+**C1 PASS.** Recent work (7), newest first: Claude 2 min (tester, claude-desktop), Claude 6 min "Reinstalacja się udała…", Claude 39 min "Handoff jest uaktualniony i wysłany (commit 890e040)…", Claude 3 h "Zapisałem wszystko w pamięci…", Codex 18 h "AI Baton v1 is functional…", and two Claude 20 h entries. There were no reviewer outputs and no "false", "undefined" or "[object".
+
+**C2 PASS.** Expanded entries show the full plain-text summary (no Markdown), "13 replies · @ 0aa2984 · updated handoff" or "78 replies · @ 890e040 · updated handoff", plus **Open session**, **Ask for review** and **Copy summary**.
+
+**C3 PASS.** Open session on the Claude 39 min entry opened the conversation "Następny krok z handoffu" in an editor tab beside the panel. Status bar: "Opening the Claude conversation… it can take a few seconds".
+
+**C4 PASS.** Open session on the Codex entry showed "Opening the Codex conversation… it can take a few seconds". The Codex side bar showed its logo for a few seconds, then the thread "Summarize handoff state" with the matching prompt and reply.
+
+**C5 PASS.** "Open in editor…" opened "Recent work · ai-baton · 7 sessions" beside, grouped by day ("Monday, 26 October 2026", "Sunday, 25 October 2026"). The Codex filter left only the Codex entry, and All restored the list. Search was not retyped this round (passed in round 3).
+
+**D1 PASS.** The tester added `README.md` ("# baton-test / Scratch project for the AI Baton round 5 UI test.") to `~/baton-test`. With no conversation in the folder, Ask for review skipped step 1. It opened "Ask for review (2/3): who reviews?" (Claude, Codex, no author) and then step 3: "Codex gets the changes (or, if no files changed, the conversation's replies) plus the latest summary and the handoff, so it knows what they are for. Press Enter to start, or name a focus." The process `baton review --json --agent codex --path ~/baton-test` ran 11:47:01–11:47:29, **about 28 s**. Tab "# Review by Codex": "Reviewed: the uncommitted changes", then three ranked points citing `AGENTS.md:29` and `README.md:3`. Notification: "Codex's review is ready." with only **Copy review** (no conversation to send back to).
+
+**D3 PASS.** A second review (Claude) showed "Claude is reviewing the work… (usually 1-3 minutes)" with **Cancel**. Cancel closed it at once with no error, and afterwards there was no `baton review` and no `git` process for the folder.
+
+**D5 PASS.** After both reviews, `baton recent --json ~/baton-test` returned `"sessions": []` and no `.agent-memory/` existed: the reviewer left no checkpoint.
+
+**D6 FAIL.** `~/baton-test-nogit` (no `git init`) also opened in Restricted Mode first. After the user trusted it, Initialize project created the same files as A2 and no `.git`. The user asked Claude (VS Code) "Utwórz plik notes.txt z jedną linijką: hello from round 5", and Claude created `notes.txt`. Its checkpoint lists `"kind": "shadow", "commit": "53553b5"` with `notes.txt` among 8 changed files. Ask for review → "Claude · VS Code · 1 min ago" → step 2 "who reviews Claude's work?" (Codex first, Claude "wrote this (self-review)") → Codex. The run had `--session e8dd47f4…` and lasted 11:53:02–11:53:35 (about 33 s). Expected "Reviewed: the changes since that conversation began". Got "**Reviewed: Claude's replies in that conversation (no file changes)**" and "Work of: Claude, conversation from 1 min ago". Codex still mentioned `notes.txt`, because it read the file itself, but the header is wrong: a file did change. Cause: the shadow repo has only one commit, taken at the end of that first conversation (`53553b5`, 11:52:10), so there is no snapshot from where it began. `collect_shadow` (review.py:213) finds no base and returns nothing, and the review falls back to "replies … (no file changes)". The first conversation in a fresh no-git project can never be reviewed as a change. Initialize, or UserPromptSubmit when no snapshot exists, should take a baseline snapshot. Screenshot: `round5-D6-nogit-no-file-changes.jpg` (tester's scratchpad, sent to the user).
+
+**D7 PASS.** No conversation in `~/ai-baton` qualifies: every recent one ended in a commit. The user asked a question in a second Claude conversation in `~/baton-test-nogit` ("Ile plików jest w katalogu tests? Niczego nie zmieniaj."), and Claude only ran `ls` and `find`. Ask for review on "Claude · VS Code · just now" → Codex. The run (`--session feb01cdd…`) lasted 11:56:26–11:56:56, about 30 s. Header: "**Reviewed: Claude's replies in that conversation (no file changes)**", "Work of: Claude, conversation from 2 min ago", then points on the reply text. This covers the no-git variant only; the git variant (clean tree, no commit since) was not tested.
+
+**D2 PASS.** On the D7 review, "Codex's review is ready. Send it back to Claude's conversation from 2 min ago?" → **Send to Claude** kept the same conversation ("Liczba plików w katalogu tests") focused with the review tab attached as "Untitled-2". The status bar showed "Opening the Claude conversation…" and the toast "Review copied. Paste it into Claude (⌘V) and send. Claude lists wh…". Nothing was pasted.
+
+**E PASS.** `~/ai-baton` panel: the Claude card shows "working" (the tester's session, correct) and "Checkpoint 1 min ago · main @ 0aa2984". The Codex card shows "Checkpoint 18 h ago · main @ ba9deed" with no "working" badge and no hook warning. Usage "This project": Codex 144k / 968k in 7 days, Claude 2.7M / 5.2M in 7 days, chart for 13.10–26.10. Plan limits: Claude 5-hour "~0%" "Window has already reset · stale, read 15 h ago" and Claude weekly "~19%" "Resets Sat 31 Oct, 07:59 · stale, read 15 h ago", both dimmed. Codex 5-hour 6% "Resets Mon 26 Oct, 14:36 · read 3 min ago" and Codex weekly 1% "Resets Mon 2 Nov, 09:36". **Live in Claude** is present. No error notifications.
+
+**X FAIL: New chat.** In the new `~/baton-test-nogit` window, before any Claude panel had been opened there, the user clicked **New chat** on the Claude card several times. Nothing happened: no new conversation, no panel and no error (screenshot `round5-newchat-no-effect.webp`, from the user, sent to the user). Cause: AI Baton runs `claude-vscode.newConversation` (`newCommand` in `agents.json`). In Claude Code 2.1.310 that command only calls `notifyCreateNewConversation()` on an already open Claude view, so with no view open it does nothing. The workaround was **Open**, then New chat; after that New chat worked in the same window, and it also works in `~/ai-baton` where Claude is already open. Fix idea: run the open command (or `claude-vscode.editor.open`) first, then `newConversation`.
+
+## Other observations (round 5)
+
+1. Every new folder opens in Restricted Mode, and AI Baton is disabled until the user trusts it. `MANUAL_TEST.md` 0.2 does not mention this; a first-time user sees no batuta icon at all.
+2. The panel lags after Initialize: right after the dialog it still showed "not connected" for a few seconds, and the files existed before the panel updated. In the no-git window the first click on Initialize project, made while the panel was loading, did nothing.
+3. When there is no conversation, step 1 is skipped silently, and step 2 is titled just "who reviews?". Correct, but a one-line hint ("no conversations here yet") would explain the skip.
+4. Codex's D6 review still quoted `notes.txt` because it read the folder itself, so a user may not notice the wrong header. It is worth a test in `tests/`.
+5. The D1 review in `~/baton-test` reviewed AI Baton's own scaffolding (AGENTS.md, docs/) along with README.md, because the repo has no commits; expected for an unborn repo.
+
+## State left behind (round 5)
+
+- `~/baton-test`: initialized, untracked scaffolding plus `README.md`, no commits. Its window has the "Review by Codex" tab (Untitled-1) open.
+- `~/baton-test-nogit`: initialized, `notes.txt`, `.agent-memory/` with two Claude sessions. Its window has two review tabs (Untitled-1, Untitled-2) and the Claude conversation open.
+- `~/ai-baton` window: tabs "Następny krok z handoffu" (Claude) and "Recent work"; the Codex side bar is on "Summarize handoff state".
+- The clipboard holds the D7 review prompt. Codex hooks are now approved (by the user). The only file edited in the repo is this report.
+
+---
+
+# Round 6: fixes from round 5
+
+Date: 2026-10-26, 12:31–14:31 local, with a pause while the user's plan limit reset. Tested by Claude (Claude desktop, computer use, VS Code at "click only" level) on the installed `wwijatkowski.ai-baton` 0.3.0 (extension.js from 12:31) and CLI `~/.ai-baton/versions/0.3.0`. The user trusted both new folders, gave Claude one prompt and pressed Enter once. Nothing was installed or committed, settings and hooks were not changed, and nothing was sent to an agent. Test folders: `~/baton-test6` (git, no commits) and `~/baton-test6-nogit` (no git), left in place.
+
+## Summary
+
+| # | Check | Result |
+|---|-------|--------|
+| 1.2 | Initialize shows "Setting up …", then the project view | PASS |
+| 1.4a | New chat (Claude) before any Claude view: a new conversation in an editor tab | FAIL |
+| 1.4b | New chat a second time: a second, separate conversation | FAIL (nothing opened, as in 1.4a) |
+| 1.4c | Open (Claude) still opens the side bar | PASS |
+| 5b.6 | No git: Initialize takes a baseline snapshot | PASS |
+| 5b.6 | No git: review of the conversation that edited a file | PASS (about 35 s) |
+
+## Details
+
+**1.2 PASS.** `~/baton-test6` (`git init`, no commits) opened in a new window, first in Restricted Mode; the user trusted it. The panel showed "This folder is not connected yet…" and **Initialize project**. The dialog "Set up baton-test6 for AI Baton? …" → Initialize. A "Setting up baton-test6…" notification appeared at the bottom right, then the panel switched to the project view (cards with "No checkpoint", Ask for review, Project knowledge "just now"). The toast "Project ready. Start a new Claude conversation. In Codex, approve…" followed. Created: `.agent-memory/`, `.baton.json`, `.gitignore`, `AGENTS.md`, `CLAUDE.md`, `docs/`; no `.claude/` or `.codex/`.
+
+**1.4a FAIL.** Before any Claude view was opened in this window, **New chat** on the Claude card did nothing visible: no editor tab, no side bar, no notification. The extension host log of that window shows, for each click, two of: `[error] TypeError: Cannot read properties of null (reading 'startsWith')` at `resolveTeleportedCopy` → `hasPanelForSession` (anthropic.claude-code-2.1.310 extension.js), called from `openAgent` (wwijatkowski.ai-baton extension.js:313) with `claude-vscode.editor.open`. Cause: `agents.json` now sets `"newCommand": "claude-vscode.editor.open"` with `"newArgs": [null, null, null, null, null, {"programmatic": "pin-to-panel"}]`. Claude Code reads the first argument as a session id and calls `.startsWith` on `null`, so the command throws before it opens anything. AI Baton swallows the rejection, so the user sees nothing. Fix idea: pass `undefined` (or omit the leading arguments) instead of `null`, and surface a failed `executeCommand` as an error message. Screenshot: `round6-newchat-no-effect.jpg` (tester's scratchpad, sent to the user).
+
+**1.4b FAIL.** The second click was made after **Open** (see 1.4c), with the Claude side bar already showing "Untitled". It also did nothing and logged the same TypeError (4 errors in total: 12:33:37, 12:33:38, 12:34:13, 12:34:14). A second, separate conversation could not be checked because the first never opened.
+
+**1.4c PASS.** **Open** on the Claude card opened Claude Code in the secondary side bar ("Claude Code" tab, empty "Untitled" conversation), as before. The failed New chat did not change where Open opens Claude.
+
+**5b.6 baseline PASS.** `~/baton-test6-nogit` (no `.git`), trusted by the user, Initialize project. `.agent-memory/shadow.git` was created at once with one commit, `388bbfa 2026-10-26 12:46:13 baseline`. The Output channel listed "+ .agent-memory/shadow.git: first snapshot of the files (no git repository)". This is the fix for round 5 D6.
+
+**5b.6 review PASS.** The user opened Claude (Open, then "+", because of 1.4a) and asked "Utwórz plik notes.txt z jedną linijką: hello from round 6"; Claude wrote `notes.txt` (session `53e7217c…`, client claude-vscode). Ask for review → "Claude · VS Code · just now · 1 reply" → step 2 Codex → step 3 "Codex gets the changes (or, if no files changed, the conversation's replies) plus Claude's summary from that conversation and the handoff…" → Enter. The process `baton review --json --agent codex --path ~/baton-test6-nogit --session 53e7217c…` ran 14:29:59–14:30:34, **about 35 s**. Tab "# Review by Codex": "**Reviewed: the changes since that conversation began**", "Work of: Claude, conversation from 2 min ago", "The file matches the author's stated intent exactly…", and ranked points citing `notes.txt:1` and `docs/AGENT_HANDOFF.md:8`. Notification: "Codex's review is ready. Send it back to Claude's conversation from 2 min ago?" with **Send to Claude** and **Copy review** (not clicked).
+
+## Other observations (round 6)
+
+1. New folders still open in Restricted Mode first; the user has to trust each one before AI Baton appears.
+2. A failing `executeCommand` in `openAgent` is silent. Any future change in an agent's command arguments will again look like "the button does nothing"; a `catch` with an error toast (and the log line) would make it visible.
+3. After the panel refresh, the layout shifted by one row as Recent work (1) appeared, so the tester's click meant for Ask for review hit **Add agent**. Its quick pick ("Add which installed agent?") stayed open until Ask for review replaced it; nothing was added.
+4. The round 5 note about `MANUAL_TEST.md` is addressed: section 1.2 now mentions the "Setting up …" notification and 1.4 the New chat check.
+
+## State left behind (round 6)
+
+- `~/baton-test6`: initialized, no commits; the Claude side bar is open with an empty "Untitled" conversation.
+- `~/baton-test6-nogit`: initialized with the shadow baseline, `notes.txt`, one Claude session. Its window has the "Review by Codex" tab (Untitled-1, unsaved) and the Claude conversation "Plik notes.txt" open.
+- Earlier folders `~/baton-test` and `~/baton-test-nogit` are unchanged since round 5.
+- The only file edited by the tester is this report. Other uncommitted changes in the repo (baton/*.py, agents.json, extension.js and others) are the author's fixes, not the tester's.
+
+---
+
+# Round 6b: New chat retest
+
+Date: 2026-10-26, 14:38–14:40 local. Tested by Claude (Claude desktop, computer use, VS Code at "click only" level) on `wwijatkowski.ai-baton` 0.3.0 reinstalled from the new .vsix (extension.js from 14:36). It maps `null` in `newArgs` to `undefined` (extension.js:313–314) and shows "Could not open …" when the command fails (extension.js:320). Nothing was installed or committed, settings and hooks were not changed, and nothing was sent to an agent; the new conversations were left empty.
+
+## Summary
+
+| # | Check | Result |
+|---|-------|--------|
+| 1 | ~/baton-test6 in a new window, Claude not open beforehand | PASS (folder recreated, see details) |
+| 2 | New chat → new Claude conversation in an editor tab, no error | PASS |
+| 3 | New chat again → a second, separate tab | PASS |
+| 4 | Open → Claude in the side bar, as before | PASS |
+| 5 | No "Could not open Claude" message; no TypeError in the Extension Host log | PASS |
+
+## Details
+
+**1 PASS.** `~/baton-test6` (like all earlier test folders) had been deleted since round 6: `open -a "Visual Studio Code" ~/baton-test6` answered "The file /Users/wiktorwijatkowski/baton-test6 does not exist." The tester recreated it with `git init` (no commits) and opened it in a new window, which showed Restricted Mode until the user trusted it. The restored window had no Claude view: the secondary side bar showed only Chat and Codex tabs and the editor only "Welcome", so nothing had to be closed. Initialize project was then run (the dialog, "Project ready…" toast, cards with "No checkpoint"), because a fresh folder shows only "This folder is not connected yet".
+
+**2 PASS.** **New chat** on the Claude card opened an editor tab "Claude Code" beside Welcome. After a moment it showed an empty "Untitled" conversation (Claude Code logo, "You've come to the absolutely right place!", "Introducing Sonnet 5.5" card, input "⌘ Esc to focus or unfocus Claude", model "Opus 5.5"). No error notification.
+
+**3 PASS.** A second **New chat** opened a second, separate tab: the editor group then had two tabs, both titled "Claude Code", the new one active. No error.
+
+**4 PASS.** **Open** on the Claude card opened Claude Code in the secondary side bar ("Claude Code" tab next to Chat and Codex, an empty "Untitled" conversation, "Tired of repeating yourself? Tell Claude to remember what you've told it using CLAUDE.md."). The two editor tabs stayed open. New chat did not change where Open puts Claude.
+
+**5 PASS.** No "Could not open Claude: …" message appeared at any step. The Extension Host log of this window (`logs/20261024T234158/window10/exthost/exthost.log`, 26 lines; its AI Baton output log names baton-test6) contains no `TypeError`, no `startsWith`, no `resolveTeleportedCopy` and no `claude-vscode.editor.open` error. The Output → AI Baton channel only shows the Initialize lines ("Done. Restart agent sessions in this folder.").
+
+## Other observations (round 6b)
+
+1. The test folders from rounds 5 and 6 no longer exist. `MANUAL_TEST.md` 1.4 assumes a fresh, initialized folder anyway, so recreating it is part of the step.
+2. Both New chat tabs have the same title "Claude Code" until a message is sent, so two empty conversations look identical in the tab bar. That is Claude Code's naming, not AI Baton's.
+
+## State left behind (round 6b)
+
+- `~/baton-test6`: recreated, `git init` (no commits), initialized by AI Baton. Its window has two empty "Claude Code" editor tabs and Claude Code in the side bar. No messages were sent.
+- The only file edited by the tester is this report.

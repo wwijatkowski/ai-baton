@@ -310,7 +310,15 @@ async function openAgent(id, fresh) {
       'Switch Anyway');
     if (!go) return;
   }
-  await vscode.commands.executeCommand((fresh && agent.newCommand) || agent.openCommand);
+  // JSON has no `undefined`: a null in newArgs means "argument left out" (Claude reads a null session id as a string).
+  const args = fresh && agent.newCommand ? (agent.newArgs || []).map((a) => (a === null ? undefined : a)) : [];
+  try {
+    await vscode.commands.executeCommand((fresh && agent.newCommand) || agent.openCommand, ...args);
+  } catch (error) {
+    // A changed command in the agent's extension must not look like a dead button.
+    output.appendLine(`${agent.label}: ${error.stack || error.message}`);
+    return vscode.window.showErrorMessage(`Could not open ${agent.label}: ${error.message}`);
+  }
   if (!agent.hooks) {
     // Agents without lifecycle hooks get the shared context by hand.
     await vscode.env.clipboard.writeText(CONTEXT_PROMPT);
@@ -570,7 +578,10 @@ async function askForReview(preset) {
   reviewers.sort((a, b) => (a.id === author) - (b.id === author));
   const pick = await vscode.window.showQuickPick(
     reviewers.map((a) => ({ label: `$(hubot) ${a.label}`, description: a.id === author ? 'wrote this (self-review)' : '', agent: a })),
-    { title: `Ask for review (2/3): who reviews${session ? ` ${label(author)}'s work` : ''}?`, ignoreFocusOut: true });
+    { title: `Ask for review (2/3): who reviews${session ? ` ${label(author)}'s work` : ''}?`,
+      placeHolder: sessions.length || session ? undefined
+        : 'No agent conversation in this project yet, so the reviewer gets the current changes without an author.',
+      ignoreFocusOut: true });
   if (!pick) return;
 
   const context = !session ? 'the latest summary' : author === pick.agent.id ? 'its own summary from that conversation'
@@ -667,13 +678,19 @@ async function initProject() {
     const missing = hooked.filter((id) => !user[id] || user[id].state === 'missing');
     if (missing.length) await installHooks(missing);
   }
-  try {
-    output.appendLine(await baton(['init', root, `--agents=${hooked.join(',')}`]));
-    output.show(true);
-    vscode.window.showInformationMessage(['Project ready.', ...hooked.map((id) => tips[id]).filter(Boolean)].join(' '));
-  } catch (error) {
-    vscode.window.showErrorMessage(error.message);
-  }
+  // The panel only changes after the status refresh, which takes a few seconds: show that something is happening.
+  await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Setting up ${path.basename(root)}…` },
+    async () => {
+      try {
+        output.appendLine(await baton(['init', root, `--agents=${hooked.join(',')}`]));
+        output.show(true);
+      } catch (error) {
+        vscode.window.showErrorMessage(error.message);
+        return;
+      }
+      await refreshStatus();
+      vscode.window.showInformationMessage(['Project ready.', ...hooked.map((id) => tips[id]).filter(Boolean)].join(' '));
+    });
   refreshAll();
 }
 
