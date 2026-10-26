@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1 (preview)
+
+- Clearer Marketplace listing: name, description and keywords say what AI Baton works with (Claude Code, Codex; VS Code, Cursor and Windsurf through Open VSX).
+- A short demo at the top of the README: one agent picks up and reviews the other's work.
+
 ## 0.4.0 (preview)
 
 - Windows support (Python 3.11 or newer): the CLI, memory hooks and the CLI installer work on Windows; Python is found through the `py` launcher or `python`.
