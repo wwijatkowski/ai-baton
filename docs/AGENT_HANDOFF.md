@@ -5,8 +5,8 @@ A short, current state of the work for the next agent. Replace outdated content;
 **Last updated:** 2026-10-26 (evening, Open VSX namespace verified), Claude
 
 ## Current state
-AI Baton 0.3.0 (preview) is PUBLISHED on the VS Code Marketplace (`wwijatkowski.ai-baton`, 2026-10-26). The repo `github.com/wwijatkowski/ai-baton` is public.
-- CLI (`baton/`, Python 3.9+, stdlib only): global memory hooks for Claude and Codex, tiered memory, `review`, `recent`, `hook-status`, `install-hooks`, `uninstall-hooks`.
+AI Baton 0.4.0 (preview) is PUBLISHED on the VS Code Marketplace and Open VSX (`wwijatkowski.ai-baton`, 2026-10-26, first automated release from the `v0.4.0` tag via `release.yml`; GitHub release with the .vsix). The repo `github.com/wwijatkowski/ai-baton` is public.
+- CLI (`baton/`, Python 3.9+, 3.11+ on Windows, stdlib only): global memory hooks for Claude and Codex, tiered memory, `review`, `recent`, `hook-status`, `install-hooks`, `uninstall-hooks`.
 - Extension (`vscode-extension/`): agents, Recent work, Ask for review, usage and limits. The .vsix bundles the CLI and installs it to `~/.ai-baton` on activation (stable launcher `bin/baton` for hooks).
 - Tests: `python3 -m unittest discover -s tests` (56, plus extension flows and webviews in Node); CI on Linux, Windows and macOS for every push and PR. Real agents: `sh tests/e2e_agents.sh`. UI: `docs/MANUAL_TEST.md`, six rounds by Claude desktop in `docs/UI_TEST_REPORT.md`.
 - Package: `sh scripts/package.sh` builds `ai-baton-0.3.0.vsix` (gitignored) and checks its contents.
@@ -35,28 +35,18 @@ AI Baton 0.3.0 (preview) is PUBLISHED on the VS Code Marketplace (`wwijatkowski.
 - Two Codex reviews of the plan and the diff; accepted points applied (see DECISIONS).
 
 ## Next steps (in this order)
-1. User, once: add two repository secrets. Each is typed in when `gh` asks for it, never pasted into a chat or the repo.
-   - `gh secret set VSCE_PAT`: Azure DevOps token of the Microsoft account that owns publisher `wwijatkowski`. Create it at dev.azure.com, User settings, Personal access tokens. Organization: All accessible organizations. Scope: Marketplace, Manage.
-   - `gh secret set OVSX_PAT`: open-vsx.org, Settings, Access Tokens.
-2. User: review and merge PR #1.
-3. Release 0.4.0: tag the merge commit, `git tag v0.4.0 && git push origin v0.4.0`. `.github/workflows/release.yml` then:
-   - runs all 12 test jobs;
-   - checks that the tag matches package.json;
-   - packages with `scripts/package.sh`;
-   - publishes to the Marketplace (vsce 4.0.0) and Open VSX (ovsx 1.2.0), skipping versions already published, so a re-run is safe;
-   - creates a GitHub release with the .vsix and this version's CHANGELOG section.
-   Future releases: bump the version and add a CHANGELOG section in a PR, merge, tag.
-4. After the first Open VSX publish:
+Releasing: secrets VSCE_PAT and OVSX_PAT are set. Bump the version and add a CHANGELOG section in a PR, merge, then `git tag vX.Y.Z && git push origin vX.Y.Z`. `release.yml` then tests, publishes to both stores and creates the GitHub release; the stores show the new version about 5 minutes later.
+1. Now that Open VSX has the extension:
    - The user removes the Reader member added to the Marketplace publisher for the namespace claim.
    - Switch Open VSX to trusted publishing. The user registers owner `wwijatkowski`, repo `ai-baton`, workflow `release.yml`, environment `release` at open-vsx.org Settings > Trusted Publishers. We add `id-token: write` to the publish job and drop `OVSX_PAT` from `release.yml` (ovsx 1.2.0 uses OIDC when no token is set); then the user deletes the OVSX_PAT secret and the token.
-5. BEFORE 2026-12-01 (Azure DevOps retires global PATs, VSCE_PAT stops working): publish to the Marketplace without a PAT.
+2. BEFORE 2026-12-01 (Azure DevOps retires global PATs, VSCE_PAT stops working): publish to the Marketplace without a PAT.
    - A user-assigned managed identity in the user's Azure subscription, with a federated credential for GitHub Actions, entity Environment `release`.
    - Secrets `AZURE_CLIENT_ID` and `AZURE_TENANT_ID`.
    - Get the identity's Azure DevOps profile id once (`az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me --resource 499b84ac-1321-427f-aa17-267ca6975798` while logged in as the identity, e.g. a temporary workflow_dispatch job). The user adds that id as Contributor in the publisher's Members.
    - Workflow: `azure/login@v2` (allow-no-subscriptions), then `vsce publish --azure-credential`. An app registration fails with "operation is not allowed"; it must be a managed identity.
    - Guide: emrecodes.net/posts/2026/07/10/vscode-marketplace-managed-identity.html
-6. Optional: a manual look at the VS Code panel on Windows. CI covers the CLIs, hooks and the extension host, not the rendered webview.
-7. Publisher display name (waiting for VSMarketplace@microsoft.com). Optional: announcement post.
+3. Optional: a manual look at the VS Code panel on Windows. CI covers the CLIs, hooks and the extension host, not the rendered webview.
+4. Publisher display name (waiting for VSMarketplace@microsoft.com). Optional: announcement post.
 
 ## How we work (user's preferences)
 - Reply in Polish; docs in English. Ask before outward or destructive actions (pushes to other repos, history rewrites, deleting memory).
