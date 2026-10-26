@@ -2,7 +2,7 @@
 
 A conductor for your AI coding agents. Claude Code, Codex and others take turns on one project without losing context: shared memory through lifecycle hooks, project knowledge in `docs/`, second opinions from another agent, and token usage and plan limits in a VS Code panel.
 
-Status: preview, used daily on its own repository. macOS and Linux.
+Status: preview, used daily on its own repository. macOS, Linux and Windows (tested in CI on all three).
 
 - `baton/`: the CLI and hooks (Python 3, standard library only).
 - `vscode-extension/`: the VS Code panel.

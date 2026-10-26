@@ -17,20 +17,17 @@ One place to switch between coding agents on a project without losing context or
 
 ## In progress
 - Dogfooding AI Baton on this repo.
+- PR #1 (cross-platform-ci): Windows support and CI; green on all 9 jobs, waiting for the user's merge.
 
 ## To do
-1. Publish a free preview on the VS Code Marketplace (and Open VSX), macOS and Linux:
-   - Done: CLI bundled in the .vsix and installed to `~/.ai-baton` (stable launcher for hooks); first-run checks for the CLI and Python 3.9+; init only for agents found on the computer.
-   - Done: Marketplace README (what it reads and writes, undocumented internals), icon, CHANGELOG, metadata; fresh install simulated on macOS with Python 3.9; git history scanned (no secrets); project hooks removed from this repo.
-   - Left: screenshots or a GIF for the README (user), a Linux check, installing the .vsix in VS Code once.
-   - User: publisher `wwijatkowski` created; Open VSX in progress; decide on the commit author e-mail, then make the GitHub repo public and publish.
+1. Done: 0.3.0 preview published on the VS Code Marketplace (2026-10-26). Left: Open VSX (waits for EclipseFdn/open-vsx.org#14730), publisher display name.
 2. Shared memory for agents without hooks (Copilot, Cline, Gemini, Continue, ...), one approach for all:
    - Main path: a local MCP server (`baton mcp`, stdio, no network) with tools `baton_context` (what the hooks inject at start) and `baton_checkpoint` (save a summary at the end). Most agents speak MCP; AGENTS.md tells them to call the tools. Checkpoints land in the same history, so Recent work and other agents see them.
    - Fallback: the extension infers a checkpoint when the handoff doc or git changes while a hook-less agent was the last one opened (marked as inferred).
    - Per agent, use native hooks where they exist (check each agent's docs when adding it).
 3. Idea: give an agent its own latest checkpoint when it starts a new chat (today hooks deliver only the other agents' checkpoints; the same agent relies on the handoff docs).
 4. More reviewers for `baton review`: agents with a headless CLI (check Gemini CLI, Copilot CLI) get a runner in `review.py` and `"review"` in the registry; panel-only agents (Cline, Continue) cannot review.
-5. Tests for extension.js flows with a mocked VS Code API (Ask for review: session pick, cancel at each step, "No particular conversation", Send to the chosen session); today only the webviews and the CLI are tested.
+5. Done (branch cross-platform-ci): Windows support, CI on Linux/Windows/macOS (unit tests plus the extension in a real VS Code), extension.js flow tests with a fake VS Code API, activity per conversation. Left: a manual check with the real Claude and Codex extensions on Windows.
 6. Measure whether project memory saves tokens (tokens spent before real work starts, before vs after init).
 7. Set up the user's own projects with AI Baton (the list and order are kept privately; ask the user first).
 8. Optionally remove the old project hooks from projects set up before the global hooks (global hooks cover them; ask the user first).

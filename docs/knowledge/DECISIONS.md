@@ -2,6 +2,17 @@
 
 Lasting project decisions, newest first. Format: `## YYYY-MM-DD: title`, followed by the decision, the reasoning and who decided.
 
+## 2026-10-26: Windows support and CI on three systems
+- Decision: support native Windows (not WSL). GitHub Actions runs the unit tests on Linux, Windows and macOS (Python 3.9 and 3.13) and the extension in a real VS Code on each (`tests/vscode/`, @vscode/test-electron 3.1.0, Node 22). Hook commands stay byte-identical on macOS and Linux (no Codex re-approval). On Windows: Claude's hooks use the exec form (`command` = python.exe, `args` = launcher, hook, agent), because Claude runs shell hooks in Git Bash or PowerShell, which quote differently; Codex gets `"C:/.../python.exe" "C:/.../bin/baton" hook codex --global` (forward slashes in double quotes read the same in cmd and Git Bash). The installer names the current version in a `current-version` file (Windows symlinks need extra rights; `CURRENT` would collide with `current` on case-insensitive disks) and keeps the `current` symlink on macOS and Linux for older launchers. Processes are ended as a tree with `taskkill /T` on Windows, bounded in time. All text files and pipes are UTF-8; files git reads are written with LF.
+- Reasoning: users asked for every system; a CI matrix checks each change on all three instead of a one-off VM. The real-VS-Code test runs the installed hook commands, which is where Windows differs most.
+- Open: which shell Codex uses for hooks on Windows is undocumented and unverified (paths with `$`, backticks or `%` may break); no test with the real Claude and Codex extensions on Windows yet.
+- Decided by: user (scope, GitHub Actions over an Azure VM), Claude (design), after two Codex reviews.
+
+## 2026-10-26: Activity per conversation
+- Decision: `.agent-memory/activity.json` keeps `sessions` per agent (state, time, transcript per conversation) plus an agent-level summary in the older format. Writes are locked (`.activity.lock`, 3 s). The newest 10 finished conversations are kept; working ones always stay. Transcripts are checked by readers, not under the lock. A conversation is warned about other agents and other conversations of its own agent that are working; the handoff-update check uses this conversation's own turn start. Files in the older one-entry format are read as one session.
+- Reasoning: two Claude chats in one project overwrote each other's state (the panel showed idle while one still worked, and no warning was given). Codex review (accepted: keep working sessions, compare times as times, no transcript reads under the lock).
+- Decided by: Claude, after Codex review.
+
 ## 2026-10-26: "New chat" for Claude opens a new editor tab
 - Decision: the Claude card's New chat runs `claude-vscode.editor.open` with `{"programmatic": "pin-to-panel"}` (`newArgs` in agents.json) instead of `claude-vscode.newConversation`.
 - Reasoning: `newConversation` only acts on an already open Claude view, so in a fresh window it did nothing (UI round 5, X). `editor.open` always creates a new conversation tab; without the programmatic flag it would also switch the user's preferred Claude location to the editor.
