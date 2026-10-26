@@ -5,7 +5,7 @@ A short, current state of the work for the next agent. Replace outdated content;
 **Last updated:** 2026-10-26, Claude
 
 ## Current state
-AI Baton 0.3.0 (preview) is ready to publish, pending a real-install check. Everything below is committed and pushed to the private repo `github.com/wwijatkowski/ai-baton`.
+AI Baton 0.3.0 (preview) is PUBLISHED on the VS Code Marketplace (`wwijatkowski.ai-baton`, 2026-10-26). The repo `github.com/wwijatkowski/ai-baton` is public.
 - CLI (`baton/`, Python 3.9+, stdlib only): global memory hooks for Claude and Codex, tiered memory, `review`, `recent`, `hook-status`, `install-hooks`, `uninstall-hooks`.
 - Extension (`vscode-extension/`): agents, Recent work, Ask for review, usage and limits. The .vsix bundles the CLI and installs it to `~/.ai-baton` on activation (stable launcher `bin/baton` for hooks).
 - Tests: `python3 -m unittest discover -s tests` (50, pass on Python 3.11 and the macOS system 3.9). Real agents: `sh tests/e2e_agents.sh`. UI: `docs/MANUAL_TEST.md`, six rounds by Claude desktop in `docs/UI_TEST_REPORT.md`.
@@ -13,6 +13,7 @@ AI Baton 0.3.0 (preview) is ready to publish, pending a real-install check. Ever
 - Publishing accounts: Marketplace publisher `wwijatkowski` (extension id `wwijatkowski.ai-baton`); Open VSX namespace `wwijatkowski` waits for EclipseFdn/open-vsx.org#14730. Repo history is clean (noreply author, no private project names); the full old history is in the private repo `ai-baton-history` and `~/ai-baton-full-history-2026-10-26.bundle`.
 
 ## Recently done (2026-10-26)
+- Published: repo made public, then the .vsix uploaded by hand on marketplace.visualstudio.com/manage (verified in a few minutes). `vsce publish --azure-credential` failed ("operation is not allowed"): the `az` login is a different identity (Azure subscription tenant) than the Microsoft account that owns the publisher. All README links and the 4 images on the listing return 200.
 - Screenshots: 4 PNGs (1600x976) in `vscode-extension/media/screenshots/` (panel, review-picker, review-result, usage), taken by Claude desktop in a throwaway demo project and checked by Claude (no avatar, email or private project names). Added to the extension README. `package.sh` passes `--baseImagesUrl`/`--baseContentUrl` (the extension is in a subfolder) and the .vsix excludes the screenshots, so images load from GitHub: they show on the Marketplace only once the repo is public. Also fixed: review header lines ran together in Markdown preview (now a list); the usage chart's last two date labels overlapped.
 - Real package installed (`wwijatkowski.ai-baton` 0.3.0 from the .vsix); hooks call `~/.ai-baton/bin/baton`; Codex hooks re-approved. The installer only replaces `~/.ai-baton` when the version changes, so after rebuilding 0.3.0 its CLI was copied into `~/.ai-baton/versions/0.3.0` by hand.
 - `baton review` works without git (shadow snapshots, or a file list without git) and reviews a conversation's replies when no files changed (DECISIONS 2026-10-26).
@@ -21,7 +22,10 @@ AI Baton 0.3.0 (preview) is ready to publish, pending a real-install check. Ever
 - Tests: 50 pass (3.11 and 3.9). First prompt in a 3000-file project without git: 1.5 s (one-time snapshot), then 0.05 s.
 
 ## Next steps (in this order)
-1. Publish: make `ai-baton` public FIRST (README images load from GitHub), then upload the .vsix on marketplace.visualstudio.com/manage (or `vsce publish --azure-credential` after `az login`, untested; it needs the same base URL flags as `scripts/package.sh`); Open VSX after #14730 closes.
+1. Install from the Marketplace (replacing the .vsix install) and check the panel and hooks still work.
+2. Publisher display name is "Wiktor W": "Wiktor Wijatkowski" is still held by the user's old publisher ("WW old"); the user decides whether to delete it or ask VSMarketplace@microsoft.com.
+3. Open VSX after EclipseFdn/open-vsx.org#14730 closes: `npx ovsx publish ai-baton-0.3.0.vsix -p <token>`.
+4. Future releases: bump the version, `sh scripts/package.sh`, upload on the manage page (or a Marketplace PAT with `vsce publish --packagePath`).
 
 ## How we work (user's preferences)
 - Reply in Polish; docs in English. Ask before outward or destructive actions (pushes to other repos, history rewrites, deleting memory).
