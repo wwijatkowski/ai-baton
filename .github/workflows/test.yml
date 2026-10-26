@@ -26,3 +26,31 @@ jobs:
           node-version: 20
       - name: Unit tests (CLI, installer, webviews)
         run: python -m unittest discover -s tests -v
+
+  vscode:
+    # The extension in a real VS Code on each system: activation, CLI install, hooks' checkpoint in the panel.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Bundle the CLI and install the test runner
+        shell: bash
+        run: |
+          sh scripts/bundle-cli.sh
+          npm install --no-save --prefix tests/vscode @vscode/test-electron
+      - name: Integration test in VS Code
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node tests/vscode/run.js
+      - name: Integration test in VS Code
+        if: runner.os != 'Linux'
+        run: node tests/vscode/run.js

@@ -866,6 +866,8 @@ async function activate(context) {
     { dispose: () => { clearInterval(timer); if (watcher) watcher.dispose(); if (recentPanel) recentPanel.dispose(); } },
   );
   await initialize(context);
+  // Read-only view of the panel state, for the integration test in real VS Code (tests/vscode/).
+  return { state: () => state };
 }
 
 // Prepares the CLI and checks Python. Runs at start and whenever aiBaton.home or aiBaton.python changes; nothing
