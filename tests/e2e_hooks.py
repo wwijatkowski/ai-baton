@@ -131,7 +131,7 @@ def diagnose_codex(home, project, env):
         script.chmod(0o755)
     config = json.loads((home / '.codex' / 'hooks.json').read_text(encoding='utf-8'))
     config['hooks']['SessionStart'] = [{'hooks': [{'type': 'command', 'timeout': 10,
-                                                   'command': f'"{script.as_posix()}"'}]}]
+                                                   'command': f'"{script}"'}]}]
     (home / '.codex' / 'hooks.json').write_text(json.dumps(config), encoding='utf-8')
     from baton import hookcheck
     approve(home, hookcheck.codex_hooks(shutil.which('codex'), project))
