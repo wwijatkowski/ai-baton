@@ -2,9 +2,10 @@ name: Release
 
 # Push a tag like v0.4.0 (it must match vscode-extension/package.json) to run every test, then package the extension
 # and publish it to the VS Code Marketplace and Open VSX, with the .vsix attached to a GitHub release.
-# Secrets (set once by the publisher, e.g. `gh secret set VSCE_PAT`): VSCE_PAT (Azure DevOps token with Marketplace
-# Manage scope) and OVSX_PAT (open-vsx.org access token). Re-running after a partial failure is safe: versions already
-# published are skipped.
+# Marketplace: secret VSCE_PAT (Azure DevOps token with Marketplace Manage scope; set with `gh secret set VSCE_PAT`).
+# Open VSX: trusted publishing (OIDC, registered at open-vsx.org for this workflow and the `release` environment), with
+# the OVSX_PAT secret as a fallback until it has worked once. Re-running after a partial failure is safe: versions
+# already published are skipped.
 on:
   push:
     tags: ['v*']
@@ -22,6 +23,7 @@ jobs:
     environment: release
     permissions:
       contents: write  # The GitHub release.
+      id-token: write  # Open VSX trusted publishing.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -44,8 +46,15 @@ jobs:
         run: npx --yes @vscode/vsce@4.0.0 publish --packagePath "ai-baton-$VERSION.vsix" --skip-duplicate
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-      - name: Publish to Open VSX
-        run: npx --yes ovsx@1.2.0 publish "ai-baton-$VERSION.vsix" --skip-duplicate
+      - name: Publish to Open VSX (trusted publishing)
+        id: ovsx
+        continue-on-error: true
+        run: npx --yes ovsx@1.2.0 publish "ai-baton-$VERSION.vsix" --skip-duplicate --trusted-publishing
+      - name: Publish to Open VSX (token, fallback)
+        if: steps.ovsx.outcome == 'failure'
+        run: |
+          echo "::warning::Open VSX trusted publishing failed; published with OVSX_PAT instead. Check the registration at open-vsx.org."
+          npx --yes ovsx@1.2.0 publish "ai-baton-$VERSION.vsix" --skip-duplicate
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
       - name: GitHub release
