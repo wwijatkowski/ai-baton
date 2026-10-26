@@ -22,7 +22,8 @@ AI Baton 0.3.0 (preview) is PUBLISHED on the VS Code Marketplace (`wwijatkowski.
   - git watchdog detects its own kill (Windows exit code is 1);
   - binaries found with `.exe`;
   - usage paths normalized.
-- Hooks on Windows: Claude in exec form (`command` + `args`), Codex as a quoted forward-slash command line. Recognition (`hook_text`, regex with `[/\\]`) covers both. Commands on macOS/Linux are unchanged.
+- Hooks on Windows: Claude in exec form (`command` + `args`). Codex runs hooks in PowerShell with an empty environment, so its command is `C:/.../python.exe "C:/.../bin/baton" hook codex --global` (unquoted interpreter, 8.3 name if needed) and `baton/winenv.py` restores the environment. Recognition (`hook_text`, regex with `[/\\]`) covers all forms. Commands on macOS/Linux are unchanged.
+- `tests/e2e_hooks.py`: the real Claude Code and Codex CLIs (npm, latest) run the installed hooks with no login and no tokens. It checks Codex approval via `hook-status` and context delivered between the agents. CI job `agents` runs it on 3 systems, plus weekly. On failure it prints Codex's own hook results (via app-server `hook/completed`).
 - Installer: `current-version` pointer file (the `current` symlink is kept on POSIX); migration from symlink installs tested.
 - Extension: Python lookup (`py -3`, `python`, `python3` on Windows when the setting is the default); `activate` returns `{ state }` for the integration test.
 - Activity per conversation (`activity.json[agent].sessions`, see DECISIONS).
@@ -36,7 +37,7 @@ AI Baton 0.3.0 (preview) is PUBLISHED on the VS Code Marketplace (`wwijatkowski.
 ## Next steps (in this order)
 1. User: review and merge PR #1 (squash or merge), then delete the branch.
 2. Release 0.3.1 (or 0.4.0): bump the version, `sh scripts/package.sh`, upload on the Marketplace manage page; CHANGELOG has an Unreleased section.
-3. Manual check on a real Windows machine with the Claude and Codex extensions: hooks fire, Codex approves them, review works. The shell Codex uses for `commandWindows`/`command` on Windows is unverified.
+3. Optional: a manual look at the VS Code panel on Windows (CI covers the CLIs, hooks and the extension host, not the rendered webview).
 4. Open VSX publish (namespace ready). User: create a token at open-vsx.org → Access Tokens (never paste it into chat or the repo). Decide the version: A (recommended) merge PR #1, release 0.3.1 to Marketplace and Open VSX together; B rebuild 0.3.0 from `main` and publish it now (the local `ai-baton-0.3.0.vsix` from 15:48 may not match the Marketplace build). Publish: `npx ovsx publish ai-baton-<version>.vsix -p <TOKEN>` (user runs it). Later option: Trusted Publishers (GitHub Actions OIDC, no stored token). Afterwards the user removes the Reader member added to the Marketplace publisher for the claim.
 5. Publisher display name (waiting for VSMarketplace@microsoft.com).
 6. Optional: announcement post.
@@ -49,6 +50,6 @@ AI Baton 0.3.0 (preview) is PUBLISHED on the VS Code Marketplace (`wwijatkowski.
 
 ## Open issues / risks
 - Review infers a conversation's start from the checkpoint before its first one; wrong when another agent checkpoints during that first turn (deferred, see DECISIONS).
-- Windows: tested only in CI (no real Claude/Codex there). Codex hook command paths with `$`, backticks or `%` may break if Codex runs them through a shell.
+- Windows: verified in CI with the real agent CLIs, not yet by a person in VS Code on Windows.
 - The real-VS-Code test does not check the webview itself (`tests/webview_smoke.js` renders it in a fake DOM).
 - Codex was briefly "at capacity" during a review; `baton review` reports such failures as errors.
