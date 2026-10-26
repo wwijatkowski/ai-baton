@@ -13,6 +13,8 @@ AI Baton 0.3.0 (preview) is PUBLISHED on the VS Code Marketplace (`wwijatkowski.
 - Publishing accounts: Marketplace publisher `wwijatkowski` (extension id `wwijatkowski.ai-baton`); Open VSX namespace `wwijatkowski` waits for EclipseFdn/open-vsx.org#14730. Repo history is clean (noreply author, no private project names); the full old history is in the private repo `ai-baton-history` and `~/ai-baton-full-history-2026-10-26.bundle`.
 
 ## Recently done (2026-10-26)
+- Installed from the Marketplace (replacing the .vsix install); the user confirmed it works.
+- Adoption stats: a separate local panel in `~/ai-baton-stats` (NOT in this repo, not in git): stdlib Python server on 127.0.0.1:8771, opened by `AI Baton Stats.app`. Shows Marketplace installs/rating (public API, refreshed by Microsoft about daily), Open VSX downloads, GitHub stars/views/clones/referrers (via `gh`); keeps history in its `data/history.json` (snapshot per day, GitHub traffic past 14 days). Per-day Marketplace reports are only on the publisher's manage page.
 - Published: repo made public, then the .vsix uploaded by hand on marketplace.visualstudio.com/manage (verified in a few minutes). `vsce publish --azure-credential` failed ("operation is not allowed"): the `az` login is a different identity (Azure subscription tenant) than the Microsoft account that owns the publisher. All README links and the 4 images on the listing return 200.
 - Screenshots: 4 PNGs (1600x976) in `vscode-extension/media/screenshots/` (panel, review-picker, review-result, usage), taken by Claude desktop in a throwaway demo project and checked by Claude (no avatar, email or private project names). Added to the extension README. `package.sh` passes `--baseImagesUrl`/`--baseContentUrl` (the extension is in a subfolder) and the .vsix excludes the screenshots, so images load from GitHub: they show on the Marketplace only once the repo is public. Also fixed: review header lines ran together in Markdown preview (now a list); the usage chart's last two date labels overlapped.
 - Real package installed (`wwijatkowski.ai-baton` 0.3.0 from the .vsix); hooks call `~/.ai-baton/bin/baton`; Codex hooks re-approved. The installer only replaces `~/.ai-baton` when the version changes, so after rebuilding 0.3.0 its CLI was copied into `~/.ai-baton/versions/0.3.0` by hand.
@@ -22,10 +24,11 @@ AI Baton 0.3.0 (preview) is PUBLISHED on the VS Code Marketplace (`wwijatkowski.
 - Tests: 50 pass (3.11 and 3.9). First prompt in a 3000-file project without git: 1.5 s (one-time snapshot), then 0.05 s.
 
 ## Next steps (in this order)
-1. Install from the Marketplace (replacing the .vsix install) and check the panel and hooks still work.
-2. Publisher display name is "Wiktor W": "Wiktor Wijatkowski" is still held by the user's old publisher ("WW old"); the user decides whether to delete it or ask VSMarketplace@microsoft.com.
-3. Open VSX after EclipseFdn/open-vsx.org#14730 closes: `npx ovsx publish ai-baton-0.3.0.vsix -p <token>`.
-4. Future releases: bump the version, `sh scripts/package.sh`, upload on the manage page (or a Marketplace PAT with `vsce publish --packagePath`).
+1. Publisher display name is "Wiktor W": "Wiktor Wijatkowski" is still held by the user's old publisher (`WiktorWijatkowski`, now "WW old", cannot be deleted); the user emailed VSMarketplace@microsoft.com (2026-10-26) asking to delete the old publisher and set the name; when they answer, set the name in Details if they did not.
+2. Open VSX after EclipseFdn/open-vsx.org#14730 closes: `npx ovsx publish ai-baton-0.3.0.vsix -p <token>`.
+3. Optional: announcement post (r/vscode, X, LinkedIn) with the panel screenshot.
+4. Next version: tests for `extension.js` flows, a Linux check, two sessions of the same agent (see Open issues).
+5. Future releases: bump the version, `sh scripts/package.sh`, upload on the manage page (or a Marketplace PAT with `vsce publish --packagePath`).
 
 ## How we work (user's preferences)
 - Reply in Polish; docs in English. Ask before outward or destructive actions (pushes to other repos, history rewrites, deleting memory).
