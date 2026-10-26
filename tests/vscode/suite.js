@@ -31,7 +31,8 @@ exports.run = async function run() {
   const home = path.join(os.homedir(), '.ai-baton');
   assert.strictEqual(fs.readFileSync(path.join(home, 'current-version'), 'utf8').trim(), version);
   const project = process.env.BATON_TEST_PROJECT;
-  assert.strictEqual(fs.realpathSync(state.status.root), fs.realpathSync(project));
+  // .native expands Windows short names (RUNNER~1) the way Python does.
+  assert.strictEqual(fs.realpathSync.native(state.status.root), fs.realpathSync.native(project));
   assert.ok(state.status.initialized, 'the project is set up');
   // Claude's extension is not installed here; its checkpoint still lists it (with the summary the hook saved).
   const claude = state.status.agents.find((a) => a.id === 'claude');
