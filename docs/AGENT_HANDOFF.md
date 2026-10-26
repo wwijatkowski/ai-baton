@@ -13,7 +13,7 @@ AI Baton 0.3.0 (preview) is PUBLISHED on the VS Code Marketplace (`wwijatkowski.
 - Publishing accounts: Marketplace publisher `wwijatkowski` (extension id `wwijatkowski.ai-baton`); Open VSX namespace `wwijatkowski` is verified (EclipseFdn/open-vsx.org#14730 closed 2026-10-26), Publisher Agreement signed, nothing published there yet. Repo history is clean (noreply author, no private project names); the full old history is in the private repo `ai-baton-history` and `~/ai-baton-full-history-2026-10-26.bundle`.
 
 ## Recently done (2026-10-26, branch `cross-platform-ci`, PR #1)
-- Windows support (native, not WSL), all verified in CI only:
+- Windows support (native, not WSL, Python 3.11+), verified in CI including the real agent CLIs:
   - portable file lock (fcntl/msvcrt, 3 s);
   - UTF-8 for every file and pipe, LF for files git reads (a `\r` in `alternates` broke reviews without git);
   - reader thread instead of `select` in hookcheck;
@@ -27,7 +27,7 @@ AI Baton 0.3.0 (preview) is PUBLISHED on the VS Code Marketplace (`wwijatkowski.
 - Installer: `current-version` pointer file (the `current` symlink is kept on POSIX); migration from symlink installs tested.
 - Extension: Python lookup (`py -3`, `python`, `python3` on Windows when the setting is the default); `activate` returns `{ state }` for the integration test.
 - Activity per conversation (`activity.json[agent].sessions`, see DECISIONS).
-- Tests (all green, 9 CI jobs):
+- Tests (all green, 12 CI jobs: unit ×3 systems ×2 Pythons, real VS Code ×3, real agent CLIs ×3):
   - `python3 -m unittest discover -s tests`: 56 tests;
   - `tests/extension_flows.js`: 22 flows with a fake VS Code API;
   - `tests/vscode/`: real VS Code, runs the installed Claude and Codex hook commands. Locally: `sh scripts/bundle-cli.sh`, then `npm install --no-save --prefix tests/vscode @vscode/test-electron@3.1.0`, then `node tests/vscode/run.js`. It needs `--use-mock-keychain` on macOS, or a "Keychain Not Found" dialog blocks.
