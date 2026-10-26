@@ -300,6 +300,59 @@ class MemoryTiersTest(unittest.TestCase):
         (self.project / '.agent-memory/activity.json').write_text(json.dumps({'codex': ['bad']}))
         self.assertIsNone(status.project_status(self.project)['agents'][1]['activity'])
 
+    def test_two_conversations_of_one_agent(self):
+        prompt = lambda session: hook.run('claude', payload(self.project, 'UserPromptSubmit', session, prompt='go'))
+        activity = lambda: read_json(self.project / '.agent-memory/activity.json')
+        prompt('a')
+        # A second Claude chat learns the first is still working, and the first one's state survives the second.
+        self.assertIn('another claude conversation may still be active', context(prompt('b')))
+        self.assertEqual(sorted(activity()['claude']['sessions']), ['a', 'b'])
+        self.stop('claude', 'Finished in chat b.', session='b')
+        claude = status.project_status(self.project)['agents'][0]
+        self.assertEqual(claude['activity']['state'], 'working')  # Chat a still works.
+        self.assertEqual(claude['activity']['session_id'], 'a')
+        # The handoff doc counts as this chat's update only if edited after this chat's own turn began.
+        (self.project / 'docs/AGENT_HANDOFF.md').write_text('# Handoff\nchat a was here\n')
+        prompt('b')
+        self.assertFalse(self.stop('claude', 'Chat b again.', session='b')['handoff_updated'])
+        self.stop('claude', 'Finished in chat a.', session='a')
+        self.assertEqual(status.project_status(self.project)['agents'][0]['activity']['state'], 'idle')
+        self.assertNotIn('WARNING', context(prompt('c')) or '')
+        # The older one-entry-per-agent format is read as that agent's only session.
+        (self.project / '.agent-memory/activity.json').write_text(json.dumps(
+            {'codex': {'state': 'working', 'at': datetime.now(timezone.utc).isoformat(), 'session_id': 'old'}}))
+        self.assertEqual(status.project_status(self.project)['agents'][1]['activity']['state'], 'working')
+        self.assertIn('agent codex may still be active', context(prompt('d')))
+        hook.run('codex', payload(self.project, 'Stop', 'old', last_assistant_message='Done.'))
+        self.assertEqual(sorted(activity()['codex']['sessions']), ['old'])
+        # Many conversations: only the newest finished ones are kept, but one still working always stays.
+        prompt('long')
+        for i in range(hook.MAX_SESSIONS + 3):
+            prompt(f'n{i}')
+            self.stop('claude', 'Quick one.', session=f'n{i}')
+        kept = activity()['claude']['sessions']
+        self.assertIn('long', kept)
+        self.assertNotIn('n0', kept)  # The oldest finished ones are dropped.
+        self.assertIn(f'n{hook.MAX_SESSIONS + 2}', kept)
+        self.assertLessEqual(sum(1 for e in kept.values() if e['state'] == 'idle'), hook.MAX_SESSIONS)
+        self.assertEqual(status.project_status(self.project)['agents'][0]['activity']['session_id'], 'long')
+        self.assertIn('another claude conversation', context(prompt('new')))
+        # Times are compared as times: the same moment with an offset is not "newer" because of how it is written.
+        from baton.project import agent_activity
+        later = {'sessions': {'x': {'state': 'idle', 'at': '2026-01-01T10:30:00+02:00'},  # 08:30 UTC
+                              'y': {'state': 'idle', 'at': '2026-01-01T09:00:00'}}}  # Naive means UTC.
+        self.assertEqual(agent_activity(later)['at'], '2026-01-01T09:00:00')
+
+    def test_parallel_hooks_keep_every_conversation(self):
+        script = ('import sys; sys.path.insert(0, sys.argv[1]); from baton import hook; '
+                  'hook.run("claude", {"cwd": sys.argv[2], "hook_event_name": "UserPromptSubmit", '
+                  '"session_id": "p" + sys.argv[3], "prompt": "go"})')
+        procs = [subprocess.Popen([sys.executable, '-c', script, str(ROOT), str(self.project), str(i)]) for i in range(8)]
+        for proc in procs:
+            self.assertEqual(proc.wait(60), 0)
+        sessions = read_json(self.project / '.agent-memory/activity.json')['claude']['sessions']
+        self.assertEqual(sorted(sessions), sorted(f'p{i}' for i in range(8)))
+
     def test_is_working_survives_odd_entries(self):
         from baton.project import is_working
         recent = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()  # Naive: read as UTC.

@@ -200,6 +200,34 @@ def is_working(entry):
     return True
 
 
+def agent_sessions(entry):
+    """An agent's activity per conversation. Files from before sessions were tracked hold one entry per agent: that
+    entry is its only session."""
+    if not isinstance(entry, dict):
+        return {}
+    sessions = entry.get('sessions')
+    if isinstance(sessions, dict):
+        return {str(k): v for k, v in sessions.items() if isinstance(v, dict)}
+    return {str(entry.get('session_id') or ''): entry}
+
+
+def moment(entry):
+    """When an activity entry was recorded, for ordering; unreadable times sort first."""
+    return aware(entry.get('at')) or datetime.min.replace(tzinfo=timezone.utc)
+
+
+def marked_working(entry):
+    """Recorded as working and not stale, without reading the transcript (cheap enough to run under a lock)."""
+    at = aware(entry.get('at'))
+    return entry.get('state') == 'working' and at is not None and datetime.now(timezone.utc) - at < WORKING_STALE
+
+
+def agent_activity(entry, working=is_working):
+    """The agent-level view of its sessions: the newest working one if any (the agent is busy), else the newest."""
+    ranked = sorted(agent_sessions(entry).values(), key=lambda e: (working(e), moment(e)), reverse=True)
+    return dict(ranked[0]) if ranked else None
+
+
 def clip(text, chars):
     """At most `chars` characters, cut at a word boundary with an ellipsis; None means no limit."""
     if chars is None or len(text) <= chars:
