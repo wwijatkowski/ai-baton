@@ -35,12 +35,20 @@ AI Baton 0.3.0 (preview) is PUBLISHED on the VS Code Marketplace (`wwijatkowski.
 - Two Codex reviews of the plan and the diff; accepted points applied (see DECISIONS).
 
 ## Next steps (in this order)
-1. User: review and merge PR #1 (squash or merge), then delete the branch.
-2. Release 0.3.1 (or 0.4.0): bump the version, `sh scripts/package.sh`, upload on the Marketplace manage page; CHANGELOG has an Unreleased section.
-3. Optional: a manual look at the VS Code panel on Windows (CI covers the CLIs, hooks and the extension host, not the rendered webview).
-4. Open VSX publish (namespace ready). User: create a token at open-vsx.org → Access Tokens (never paste it into chat or the repo). Decide the version: A (recommended) merge PR #1, release 0.3.1 to Marketplace and Open VSX together; B rebuild 0.3.0 from `main` and publish it now (the local `ai-baton-0.3.0.vsix` from 15:48 may not match the Marketplace build). Publish: `npx ovsx publish ai-baton-<version>.vsix -p <TOKEN>` (user runs it). Later option: Trusted Publishers (GitHub Actions OIDC, no stored token). Afterwards the user removes the Reader member added to the Marketplace publisher for the claim.
-5. Publisher display name (waiting for VSMarketplace@microsoft.com).
-6. Optional: announcement post.
+1. User, once: add two repository secrets. Each is typed in when `gh` asks for it, never pasted into a chat or the repo.
+   - `gh secret set VSCE_PAT`: Azure DevOps token of the Microsoft account that owns publisher `wwijatkowski`. Create it at dev.azure.com, User settings, Personal access tokens. Organization: All accessible organizations. Scope: Marketplace, Manage.
+   - `gh secret set OVSX_PAT`: open-vsx.org, Settings, Access Tokens.
+2. User: review and merge PR #1.
+3. Release 0.4.0: tag the merge commit, `git tag v0.4.0 && git push origin v0.4.0`. `.github/workflows/release.yml` then:
+   - runs all 12 test jobs;
+   - checks that the tag matches package.json;
+   - packages with `scripts/package.sh`;
+   - publishes to the Marketplace (vsce 4.0.0) and Open VSX (ovsx 1.2.0), skipping versions already published, so a re-run is safe;
+   - creates a GitHub release with the .vsix and this version's CHANGELOG section.
+   Future releases: bump the version and add a CHANGELOG section in a PR, merge, tag.
+4. After the first Open VSX publish: the user removes the Reader member added to the Marketplace publisher for the namespace claim. Later option: Open VSX Trusted Publishers (GitHub OIDC, no stored OVSX_PAT).
+5. Optional: a manual look at the VS Code panel on Windows. CI covers the CLIs, hooks and the extension host, not the rendered webview.
+6. Publisher display name (waiting for VSMarketplace@microsoft.com). Optional: announcement post.
 
 ## How we work (user's preferences)
 - Reply in Polish; docs in English. Ask before outward or destructive actions (pushes to other repos, history rewrites, deleting memory).

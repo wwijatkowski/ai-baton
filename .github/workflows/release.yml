@@ -1,0 +1,58 @@
+name: Release
+
+# Push a tag like v0.4.0 (it must match vscode-extension/package.json) to run every test, then package the extension
+# and publish it to the VS Code Marketplace and Open VSX, with the .vsix attached to a GitHub release.
+# Secrets (set once by the publisher, e.g. `gh secret set VSCE_PAT`): VSCE_PAT (Azure DevOps token with Marketplace
+# Manage scope) and OVSX_PAT (open-vsx.org access token). Re-running after a partial failure is safe: versions already
+# published are skipped.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    uses: ./.github/workflows/test.yml
+
+  publish:
+    needs: tests
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write  # The GitHub release.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check the tag matches the version
+        run: |
+          version=$(python3 -c "import json; print(json.load(open('vscode-extension/package.json'))['version'])")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match version $version in vscode-extension/package.json"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Package
+        run: sh scripts/package.sh
+      - name: Publish to the VS Code Marketplace
+        run: npx --yes @vscode/vsce@4.0.0 publish --packagePath "ai-baton-$VERSION.vsix" --skip-duplicate
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      - name: Publish to Open VSX
+        run: npx --yes ovsx@1.2.0 publish "ai-baton-$VERSION.vsix" --skip-duplicate
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+      - name: GitHub release
+        run: |
+          # This version's section of the changelog as the release notes.
+          awk -v v="$VERSION" '/^## /{on = index($0, "## " v " ") == 1 || $0 == "## " v} on' vscode-extension/CHANGELOG.md > notes.md
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" "ai-baton-$VERSION.vsix" --title "AI Baton $VERSION" --notes-file notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -20,7 +20,7 @@ One place to switch between coding agents on a project without losing context or
 - PR #1 (cross-platform-ci): Windows support and CI; green on all 9 jobs, waiting for the user's merge.
 
 ## To do
-1. Done: 0.3.0 preview published on the VS Code Marketplace (2026-10-26). Left: Open VSX publish (namespace verified 2026-10-26, needs a token and the version choice, see handoff), publisher display name.
+1. Done: 0.3.0 preview published on the VS Code Marketplace (2026-10-26). Left: 0.4.0 to the Marketplace and Open VSX through `release.yml` (needs the VSCE_PAT and OVSX_PAT secrets, then a `v0.4.0` tag after PR #1), publisher display name.
 2. Shared memory for agents without hooks (Copilot, Cline, Gemini, Continue, ...), one approach for all:
    - Main path: a local MCP server (`baton mcp`, stdio, no network) with tools `baton_context` (what the hooks inject at start) and `baton_checkpoint` (save a summary at the end). Most agents speak MCP; AGENTS.md tells them to call the tools. Checkpoints land in the same history, so Recent work and other agents see them.
    - Fallback: the extension infers a checkpoint when the handoff doc or git changes while a hook-less agent was the last one opened (marked as inferred).

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (preview)
 
 - Windows support (Python 3.11 or newer): the CLI, memory hooks and the CLI installer work on Windows; Python is found through the `py` launcher or `python`.
 - Two conversations of the same agent no longer overwrite each other's working state; a second chat is warned that the first one is still working.

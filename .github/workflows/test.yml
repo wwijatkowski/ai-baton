@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:  # Run by release.yml before publishing.
   schedule:
     - cron: '0 6 * * 1'  # Weekly: new Claude Code and Codex releases may change how hooks run.
 
