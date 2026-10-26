@@ -46,9 +46,17 @@ AI Baton 0.3.0 (preview) is PUBLISHED on the VS Code Marketplace (`wwijatkowski.
    - publishes to the Marketplace (vsce 4.0.0) and Open VSX (ovsx 1.2.0), skipping versions already published, so a re-run is safe;
    - creates a GitHub release with the .vsix and this version's CHANGELOG section.
    Future releases: bump the version and add a CHANGELOG section in a PR, merge, tag.
-4. After the first Open VSX publish: the user removes the Reader member added to the Marketplace publisher for the namespace claim. Later option: Open VSX Trusted Publishers (GitHub OIDC, no stored OVSX_PAT).
-5. Optional: a manual look at the VS Code panel on Windows. CI covers the CLIs, hooks and the extension host, not the rendered webview.
-6. Publisher display name (waiting for VSMarketplace@microsoft.com). Optional: announcement post.
+4. After the first Open VSX publish:
+   - The user removes the Reader member added to the Marketplace publisher for the namespace claim.
+   - Switch Open VSX to trusted publishing. The user registers owner `wwijatkowski`, repo `ai-baton`, workflow `release.yml`, environment `release` at open-vsx.org Settings > Trusted Publishers. We add `id-token: write` to the publish job and drop `OVSX_PAT` from `release.yml` (ovsx 1.2.0 uses OIDC when no token is set); then the user deletes the OVSX_PAT secret and the token.
+5. BEFORE 2026-12-01 (Azure DevOps retires global PATs, VSCE_PAT stops working): publish to the Marketplace without a PAT.
+   - A user-assigned managed identity in the user's Azure subscription, with a federated credential for GitHub Actions, entity Environment `release`.
+   - Secrets `AZURE_CLIENT_ID` and `AZURE_TENANT_ID`.
+   - Get the identity's Azure DevOps profile id once (`az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me --resource 499b84ac-1321-427f-aa17-267ca6975798` while logged in as the identity, e.g. a temporary workflow_dispatch job). The user adds that id as Contributor in the publisher's Members.
+   - Workflow: `azure/login@v2` (allow-no-subscriptions), then `vsce publish --azure-credential`. An app registration fails with "operation is not allowed"; it must be a managed identity.
+   - Guide: emrecodes.net/posts/2026/07/10/vscode-marketplace-managed-identity.html
+6. Optional: a manual look at the VS Code panel on Windows. CI covers the CLIs, hooks and the extension host, not the rendered webview.
+7. Publisher display name (waiting for VSMarketplace@microsoft.com). Optional: announcement post.
 
 ## How we work (user's preferences)
 - Reply in Polish; docs in English. Ask before outward or destructive actions (pushes to other repos, history rewrites, deleting memory).
