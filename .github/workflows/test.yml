@@ -1,0 +1,90 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:  # Run by release.yml before publishing.
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly: new Claude Code and Codex releases may change how hooks run.
+
+jobs:
+  test:
+    # Every supported system, with the oldest supported Python (3.9, macOS system Python) and a current one.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ['3.9', '3.13']
+        exclude:
+          - os: windows-latest  # Windows needs 3.11+ (3.9 cannot start in the empty environment Codex gives hooks).
+            python: '3.9'
+        include:
+          - os: windows-latest
+            python: '3.11'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Unit tests (CLI, installer, webviews)
+        run: python -m unittest discover -s tests -v
+
+  vscode:
+    # The extension in a real VS Code on each system: activation, CLI install, hooks' checkpoint in the panel.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Bundle the CLI and install the test runner
+        shell: bash
+        run: |
+          sh scripts/bundle-cli.sh
+          npm install --no-save --prefix tests/vscode @vscode/test-electron@3.1.0
+      - name: Integration test in VS Code
+        if: runner.os == 'Linux'
+        run: xvfb-run -a node tests/vscode/run.js
+      - name: Integration test in VS Code
+        if: runner.os != 'Linux'
+        run: node tests/vscode/run.js
+
+  agents:
+    # The real Claude Code and Codex CLIs (latest from npm) run the installed hooks, with no login and no tokens.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Claude Code and Codex
+        run: npm install -g @anthropic-ai/claude-code @openai/codex
+      - name: Agent versions
+        run: |
+          claude --version
+          codex --version
+      - name: Real agents run the hooks
+        run: python tests/e2e_hooks.py

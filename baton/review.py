@@ -24,7 +24,7 @@ from pathlib import Path
 
 from . import changes
 from .changes import BASELINE_REF, SHADOW_CONFIG, SHADOW_DIR
-from .project import MEMORY_DIR, agent_binary, find_root, load_agents, read_json
+from .project import MEMORY_DIR, agent_binary, find_root, kill_tree, load_agents, read_json, write_text
 from .recall import entries
 
 MAX_DIFF = 200_000
@@ -73,7 +73,8 @@ def git(root, *args, ok=(0,), limit=None, prefix=()):
             proc.wait()
             ACTIVE.remove((proc, False))
             raise ReviewError(f'collecting the changes took longer than {COLLECT_TIMEOUT} s')
-        watchdog = threading.Timer(budget, proc.kill)
+        fired = []  # The watchdog's kill; the exit code cannot tell (Windows reports 1, not a signal).
+        watchdog = threading.Timer(budget, lambda: (fired.append(True), proc.kill()))
         watchdog.start()
         cut = False  # Set before reading: a cancel can interrupt the read, and `finally` still needs it.
         try:
@@ -83,7 +84,7 @@ def git(root, *args, ok=(0,), limit=None, prefix=()):
                 proc.kill()
             proc.wait()
         finally:
-            timed_out = not watchdog.is_alive() and not cut and proc.returncode is not None and proc.returncode < 0
+            timed_out = bool(fired) and not cut
             watchdog.cancel()
             ACTIVE.remove((proc, False))
             proc.stdout.close()
@@ -228,12 +229,13 @@ def collect_shadow(project, since=None, first=None):
         scratch = Path(tmp) / 'scratch'
         git(tmp, 'init', '-q', str(scratch))
         scratch_dir = scratch / '.git'
-        (scratch_dir / 'objects' / 'info' / 'alternates').write_text(str((shadow / 'objects').resolve()) + '\n')
+        # Git reads its own files byte by byte: LF only (Windows text mode would end the path with \r).
+        write_text(scratch_dir / 'objects' / 'info' / 'alternates', str((shadow / 'objects').resolve()) + '\n')
         (scratch_dir / 'info').mkdir(exist_ok=True)
         # info/attributes outranks every .gitattributes in the project: no clean filter (an external program) runs.
-        (scratch_dir / 'info' / 'attributes').write_text('* -filter\n')
+        write_text(scratch_dir / 'info' / 'attributes', '* -filter\n')
         if (shadow / 'info' / 'exclude').exists():
-            (scratch_dir / 'info' / 'exclude').write_text((shadow / 'info' / 'exclude').read_text())
+            write_text(scratch_dir / 'info' / 'exclude', (shadow / 'info' / 'exclude').read_text(encoding='utf-8'))
         scratch_git = ('--git-dir', str(scratch_dir), '--work-tree', str(project), *SHADOW_CONFIG)
         git(project, 'add', '-A', prefix=scratch_git)
         diff = git(project, 'diff', '--cached', *SAFE_DIFF, '--stat', '--patch', base or head,
@@ -289,10 +291,13 @@ def binary(kind):
 
 def stop(proc, group):
     """End a process we started. A group (the reviewer and anything it spawned) gets SIGTERM, then SIGKILL after a
-    short grace period; either way it is reaped."""
+    short grace period; either way it is reaped. Windows has no process groups to signal: taskkill ends the tree."""
     if not group:
         proc.kill()
         proc.wait()
+        return
+    if os.name == 'nt':
+        kill_tree(proc)
         return
     for sig, grace in ((signal.SIGTERM, 3), (signal.SIGKILL, 3)):
         try:
@@ -316,8 +321,9 @@ def cancel(*_):
 
 def run(command, root, stdin):
     """Run the reviewer in its own process group so cancelling `baton review` stops it and its children too."""
+    group = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else {'start_new_session': True}
     proc = subprocess.Popen(command, cwd=root, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, start_new_session=True, env={**os.environ, ENV_FLAG: '1'})
+                            text=True, encoding='utf-8', errors='replace', env={**os.environ, ENV_FLAG: '1'}, **group)
     ACTIVE.append((proc, True))
     try:
         out, err = proc.communicate(stdin, timeout=TIMEOUT)
@@ -335,13 +341,18 @@ def run_reviewer(kind, root, prompt, diff, notes='', block='diff'):
     if not exe:
         raise ReviewError(f'{kind} CLI not found')
     stdin = (f'<notes>\n{notes}\n</notes>\n' if notes else '') + f'<{block}>\n{diff}\n</{block}>\n'
+    if exe.lower().endswith(('.cmd', '.bat')):
+        # A Windows batch wrapper (npm installs one) goes through cmd.exe, which cuts arguments at a line break and
+        # expands % and quotes: the prompt goes through stdin too, behind a fixed one-line argument.
+        stdin = f'<instructions>\n{prompt}\n</instructions>\n' + stdin
+        prompt = 'Follow the <instructions> block at the start of the input.'
     if kind == 'codex':
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / 'last.md'
             # Read-only sandbox and never ask for approval, whatever the user's config says.
             code, _, err = run([exe, 'exec', '--sandbox', 'read-only', '-c', 'approval_policy="never"',
                                 '--skip-git-repo-check', '-o', str(out), prompt], root, stdin)
-            text = out.read_text() if out.exists() else ''
+            text = out.read_text(encoding='utf-8') if out.exists() else ''
     else:
         # --tools limits which tools exist (not just which are allowed), so user settings cannot widen it.
         code, text, err = run([exe, '-p', prompt, '--tools', 'Read,Grep,Glob', '--strict-mcp-config'], root, stdin)
@@ -394,7 +405,7 @@ def author_context(project, session=None):
         last = max(snaps, key=lambda x: x['saved_at'])
         parts.append(f'Last checkpoint, {last["agent"]} at {last["saved_at"][:16]} UTC:\n{last["summary"][:MAX_CONTEXT // 2]}')
     try:
-        handoff = (project / 'docs' / 'AGENT_HANDOFF.md').read_text()
+        handoff = (project / 'docs' / 'AGENT_HANDOFF.md').read_text(encoding='utf-8')
     except OSError:
         handoff = ''
     match = re.search(r'^## Recently done\n(.*?)(?=^## |\Z)', handoff, re.S | re.M)

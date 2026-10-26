@@ -2,33 +2,61 @@
 
 A short, current state of the work for the next agent. Replace outdated content; do not keep history here (that is what Git and `docs/knowledge/` are for).
 
-**Last updated:** 2026-10-26, Claude
+**Last updated:** 2026-10-26 (evening, Open VSX namespace verified), Claude
 
 ## Current state
 AI Baton 0.3.0 (preview) is PUBLISHED on the VS Code Marketplace (`wwijatkowski.ai-baton`, 2026-10-26). The repo `github.com/wwijatkowski/ai-baton` is public.
 - CLI (`baton/`, Python 3.9+, stdlib only): global memory hooks for Claude and Codex, tiered memory, `review`, `recent`, `hook-status`, `install-hooks`, `uninstall-hooks`.
 - Extension (`vscode-extension/`): agents, Recent work, Ask for review, usage and limits. The .vsix bundles the CLI and installs it to `~/.ai-baton` on activation (stable launcher `bin/baton` for hooks).
-- Tests: `python3 -m unittest discover -s tests` (50, pass on Python 3.11 and the macOS system 3.9). Real agents: `sh tests/e2e_agents.sh`. UI: `docs/MANUAL_TEST.md`, six rounds by Claude desktop in `docs/UI_TEST_REPORT.md`.
+- Tests: `python3 -m unittest discover -s tests` (56, plus extension flows and webviews in Node); CI on Linux, Windows and macOS for every push and PR. Real agents: `sh tests/e2e_agents.sh`. UI: `docs/MANUAL_TEST.md`, six rounds by Claude desktop in `docs/UI_TEST_REPORT.md`.
 - Package: `sh scripts/package.sh` builds `ai-baton-0.3.0.vsix` (gitignored) and checks its contents.
-- Publishing accounts: Marketplace publisher `wwijatkowski` (extension id `wwijatkowski.ai-baton`); Open VSX namespace `wwijatkowski` waits for EclipseFdn/open-vsx.org#14730. Repo history is clean (noreply author, no private project names); the full old history is in the private repo `ai-baton-history` and `~/ai-baton-full-history-2026-10-26.bundle`.
+- Publishing accounts: Marketplace publisher `wwijatkowski` (extension id `wwijatkowski.ai-baton`); Open VSX namespace `wwijatkowski` is verified (EclipseFdn/open-vsx.org#14730 closed 2026-10-26), Publisher Agreement signed, nothing published there yet. Repo history is clean (noreply author, no private project names); the full old history is in the private repo `ai-baton-history` and `~/ai-baton-full-history-2026-10-26.bundle`.
 
-## Recently done (2026-10-26)
-- Installed from the Marketplace (replacing the .vsix install); the user confirmed it works.
-- Adoption stats: a separate local panel in `~/ai-baton-stats` (NOT in this repo, not in git): stdlib Python server on 127.0.0.1:8771, opened by `AI Baton Stats.app`. Shows Marketplace installs/rating (public API, refreshed by Microsoft about daily), Open VSX downloads, GitHub stars/views/clones/referrers (via `gh`); keeps history in its `data/history.json` (snapshot per day, GitHub traffic past 14 days). Per-day Marketplace reports are only on the publisher's manage page.
-- Published: repo made public, then the .vsix uploaded by hand on marketplace.visualstudio.com/manage (verified in a few minutes). `vsce publish --azure-credential` failed ("operation is not allowed"): the `az` login is a different identity (Azure subscription tenant) than the Microsoft account that owns the publisher. All README links and the 4 images on the listing return 200.
-- Screenshots: 4 PNGs (1600x976) in `vscode-extension/media/screenshots/` (panel, review-picker, review-result, usage), taken by Claude desktop in a throwaway demo project and checked by Claude (no avatar, email or private project names). Added to the extension README. `package.sh` passes `--baseImagesUrl`/`--baseContentUrl` (the extension is in a subfolder) and the .vsix excludes the screenshots, so images load from GitHub: they show on the Marketplace only once the repo is public. Also fixed: review header lines ran together in Markdown preview (now a list); the usage chart's last two date labels overlapped.
-- Real package installed (`wwijatkowski.ai-baton` 0.3.0 from the .vsix); hooks call `~/.ai-baton/bin/baton`; Codex hooks re-approved. The installer only replaces `~/.ai-baton` when the version changes, so after rebuilding 0.3.0 its CLI was copied into `~/.ai-baton/versions/0.3.0` by hand.
-- `baton review` works without git (shadow snapshots, or a file list without git) and reviews a conversation's replies when no files changed (DECISIONS 2026-10-26).
-- UI round 5 (docs/UI_TEST_REPORT.md): 16 PASS, 2 FAIL. Fixed both: D6 (first conversation without git had no "before": baseline snapshot at init/first prompt, `refs/baton/baseline`) and X (New chat did nothing without an open Claude view: `editor.open` + `pin-to-panel`). Also: "Setting up…" progress on Initialize, a hint when there is no conversation to review, Restricted Mode notes in README and MANUAL_TEST. Codex reviewed the fixes; all 5 points applied (bounded baseline, retry after failure, no git filters in snapshots, marked baseline only, New chat without changing Claude's preferred location).
-- UI round 6 + 6b: baseline and review without git pass; New chat first failed (`null` in `newArgs` reached Claude Code as a session id), fixed (null -> undefined, command failures shown as an error) and passed on retest. MANUAL_TEST section 7: every round ends by closing its windows and deleting its test folders.
-- Tests: 50 pass (3.11 and 3.9). First prompt in a 3000-file project without git: 1.5 s (one-time snapshot), then 0.05 s.
+## Recently done (2026-10-26, branch `cross-platform-ci`, PR #1)
+- Windows support (native, not WSL, Python 3.11+), verified in CI including the real agent CLIs:
+  - portable file lock (fcntl/msvcrt, 3 s);
+  - UTF-8 for every file and pipe, LF for files git reads (a `\r` in `alternates` broke reviews without git);
+  - reader thread instead of `select` in hookcheck;
+  - bounded process-tree kill (`project.kill_tree`, `taskkill /T`) in review, hookcheck and the extension (cancel and its own timeout);
+  - review prompt goes through stdin for `.cmd`/`.bat` reviewers;
+  - git watchdog detects its own kill (Windows exit code is 1);
+  - binaries found with `.exe`;
+  - usage paths normalized.
+- Hooks on Windows: Claude in exec form (`command` + `args`). Codex runs hooks in PowerShell with an empty environment, so its command is `C:/.../python.exe "C:/.../bin/baton" hook codex --global` (unquoted interpreter, 8.3 name if needed) and `baton/winenv.py` restores the environment. Recognition (`hook_text`, regex with `[/\\]`) covers all forms. Commands on macOS/Linux are unchanged.
+- `tests/e2e_hooks.py`: the real Claude Code and Codex CLIs (npm, latest) run the installed hooks with no login and no tokens. It checks Codex approval via `hook-status` and context delivered between the agents. CI job `agents` runs it on 3 systems, plus weekly. On failure it prints Codex's own hook results (via app-server `hook/completed`).
+- Installer: `current-version` pointer file (the `current` symlink is kept on POSIX); migration from symlink installs tested.
+- Extension: Python lookup (`py -3`, `python`, `python3` on Windows when the setting is the default); `activate` returns `{ state }` for the integration test.
+- Activity per conversation (`activity.json[agent].sessions`, see DECISIONS).
+- Tests (all green, 12 CI jobs: unit ×3 systems ×2 Pythons, real VS Code ×3, real agent CLIs ×3):
+  - `python3 -m unittest discover -s tests`: 56 tests;
+  - `tests/extension_flows.js`: 22 flows with a fake VS Code API;
+  - `tests/vscode/`: real VS Code, runs the installed Claude and Codex hook commands. Locally: `sh scripts/bundle-cli.sh`, then `npm install --no-save --prefix tests/vscode @vscode/test-electron@3.1.0`, then `node tests/vscode/run.js`. It needs `--use-mock-keychain` on macOS, or a "Keychain Not Found" dialog blocks.
+  - CI: `.github/workflows/test.yml`.
+- Two Codex reviews of the plan and the diff; accepted points applied (see DECISIONS).
 
 ## Next steps (in this order)
-1. Publisher display name is "Wiktor W": "Wiktor Wijatkowski" is still held by the user's old publisher (`WiktorWijatkowski`, now "WW old", cannot be deleted); the user emailed VSMarketplace@microsoft.com (2026-10-26) asking to delete the old publisher and set the name; when they answer, set the name in Details if they did not.
-2. Open VSX after EclipseFdn/open-vsx.org#14730 closes: `npx ovsx publish ai-baton-0.3.0.vsix -p <token>`.
-3. Optional: announcement post (r/vscode, X, LinkedIn) with the panel screenshot.
-4. Next version: tests for `extension.js` flows, a Linux check, two sessions of the same agent (see Open issues).
-5. Future releases: bump the version, `sh scripts/package.sh`, upload on the manage page (or a Marketplace PAT with `vsce publish --packagePath`).
+1. User, once: add two repository secrets. Each is typed in when `gh` asks for it, never pasted into a chat or the repo.
+   - `gh secret set VSCE_PAT`: Azure DevOps token of the Microsoft account that owns publisher `wwijatkowski`. Create it at dev.azure.com, User settings, Personal access tokens. Organization: All accessible organizations. Scope: Marketplace, Manage.
+   - `gh secret set OVSX_PAT`: open-vsx.org, Settings, Access Tokens.
+2. User: review and merge PR #1.
+3. Release 0.4.0: tag the merge commit, `git tag v0.4.0 && git push origin v0.4.0`. `.github/workflows/release.yml` then:
+   - runs all 12 test jobs;
+   - checks that the tag matches package.json;
+   - packages with `scripts/package.sh`;
+   - publishes to the Marketplace (vsce 4.0.0) and Open VSX (ovsx 1.2.0), skipping versions already published, so a re-run is safe;
+   - creates a GitHub release with the .vsix and this version's CHANGELOG section.
+   Future releases: bump the version and add a CHANGELOG section in a PR, merge, tag.
+4. After the first Open VSX publish:
+   - The user removes the Reader member added to the Marketplace publisher for the namespace claim.
+   - Switch Open VSX to trusted publishing. The user registers owner `wwijatkowski`, repo `ai-baton`, workflow `release.yml`, environment `release` at open-vsx.org Settings > Trusted Publishers. We add `id-token: write` to the publish job and drop `OVSX_PAT` from `release.yml` (ovsx 1.2.0 uses OIDC when no token is set); then the user deletes the OVSX_PAT secret and the token.
+5. BEFORE 2026-12-01 (Azure DevOps retires global PATs, VSCE_PAT stops working): publish to the Marketplace without a PAT.
+   - A user-assigned managed identity in the user's Azure subscription, with a federated credential for GitHub Actions, entity Environment `release`.
+   - Secrets `AZURE_CLIENT_ID` and `AZURE_TENANT_ID`.
+   - Get the identity's Azure DevOps profile id once (`az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me --resource 499b84ac-1321-427f-aa17-267ca6975798` while logged in as the identity, e.g. a temporary workflow_dispatch job). The user adds that id as Contributor in the publisher's Members.
+   - Workflow: `azure/login@v2` (allow-no-subscriptions), then `vsce publish --azure-credential`. An app registration fails with "operation is not allowed"; it must be a managed identity.
+   - Guide: emrecodes.net/posts/2026/07/10/vscode-marketplace-managed-identity.html
+6. Optional: a manual look at the VS Code panel on Windows. CI covers the CLIs, hooks and the extension host, not the rendered webview.
+7. Publisher display name (waiting for VSMarketplace@microsoft.com). Optional: announcement post.
 
 ## How we work (user's preferences)
 - Reply in Polish; docs in English. Ask before outward or destructive actions (pushes to other repos, history rewrites, deleting memory).
@@ -38,7 +66,6 @@ AI Baton 0.3.0 (preview) is PUBLISHED on the VS Code Marketplace (`wwijatkowski.
 
 ## Open issues / risks
 - Review infers a conversation's start from the checkpoint before its first one; wrong when another agent checkpoints during that first turn (deferred, see DECISIONS).
-- Linux and Windows untested (no Docker here); preview targets macOS and Linux.
-- No tests for `extension.js` flows (roadmap item 5).
-- Activity is one entry per agent: two sessions of the same agent overwrite each other's working state.
+- Windows: verified in CI with the real agent CLIs, not yet by a person in VS Code on Windows.
+- The real-VS-Code test does not check the webview itself (`tests/webview_smoke.js` renders it in a fake DOM).
 - Codex was briefly "at capacity" during a review; `baton review` reports such failures as errors.

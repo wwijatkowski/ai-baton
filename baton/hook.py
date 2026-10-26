@@ -9,7 +9,6 @@ hot   -> a short summary per agent, injected here within HOT_BUDGET
 warm  -> the full last reply in .agent-memory/<agent>.json, plus a pointer to the changes (see changes.py)
 cold  -> every checkpoint in history.jsonl and its gzip archive, searched with `baton recall`
 """
-import fcntl
 import gzip
 import json
 import os
@@ -17,11 +16,12 @@ import re
 from datetime import datetime, timezone
 
 from . import changes
-from .project import ARCHIVE, HISTORY, baton_command, clip, find_root, is_working, load_agents, memory_dir, \
-    now_iso, read_json, write_json, write_text
+from .project import ARCHIVE, HISTORY, agent_activity, agent_sessions, baton_command, clip, file_lock, find_root, \
+    is_working, load_agents, marked_working, moment, memory_dir, now_iso, read_json, write_json, write_text
 
 HISTORY_LIMIT = 50
 SEEN_SESSIONS = 20
+MAX_SESSIONS = 10  # Conversations per agent kept in activity.json.
 HOT_BUDGET = 6000  # Characters for all agents together, roughly 1.5k tokens.
 MIN_SUMMARY = 400
 SUMMARY_FALLBACK = 600
@@ -77,22 +77,38 @@ def other_snapshots(mem, agent, root):
     return sorted(snapshots, key=lambda s: s.get('saved_at', ''))
 
 
-def busy_warning(mem, agent):
+def busy_warning(mem, agent, session_id):
+    """Other agents, and other conversations of this agent, that may still be working in this project."""
     lines = []
-    for other, state in (read_json(mem / 'activity.json', {}) or {}).items():
-        if other != agent and is_working(state):
-            lines.append(f'WARNING: agent {other} may still be active in this project (its turn started '
-                         f'{state["at"]}). Avoid editing the same files in parallel; check with the user if unsure.\n')
+    for other, entry in (read_json(mem / 'activity.json', {}) or {}).items():
+        busy = [(sid, state) for sid, state in agent_sessions(entry).items()
+                if is_working(state) and (other != agent or sid != str(session_id or ''))]
+        if not busy:
+            continue
+        at = max((state for _, state in busy), key=moment)['at']
+        who = f'agent {other}' if other != agent else f'another {agent} conversation'
+        lines.append(f'WARNING: {who} may still be active in this project (its turn started {at}). Avoid editing '
+                     f'the same files in parallel; check with the user if unsure.\n')
     return ''.join(lines)
 
 
 def set_activity(mem, agent, state, session_id, transcript=None):
+    """Record this conversation's state; two conversations of one agent no longer overwrite each other. Each agent
+    also keeps an agent-level summary (the older format). Locked: hooks of parallel sessions would lose updates."""
     path = mem / 'activity.json'
-    activity = read_json(path, {}) or {}
-    activity[agent] = {'state': state, 'at': now_iso(), 'session_id': session_id}
-    if isinstance(transcript, str) and transcript:
-        activity[agent]['transcript'] = transcript  # Codex marks the end of each turn there (see is_working).
-    write_json(path, activity, private=True)
+    with file_lock(mem / '.activity.lock'):
+        activity = read_json(path, {}) or {}
+        sessions = agent_sessions(activity.get(agent))
+        entry = {'state': state, 'at': now_iso(), 'session_id': session_id}
+        if isinstance(transcript, str) and transcript:
+            entry['transcript'] = transcript  # Codex marks the end of each turn there (see is_working).
+        sessions[str(session_id or '')] = entry
+        # The newest finished ones are kept; a conversation still working always stays (it may outlast many others).
+        newest = sorted(sessions.items(), key=lambda item: moment(item[1]), reverse=True)
+        sessions = {sid: e for i, (sid, e) in enumerate(newest) if i < MAX_SESSIONS or marked_working(e)}
+        # Only recorded states here: transcripts are checked by readers, outside the lock.
+        activity[agent] = {**agent_activity({'sessions': sessions}, marked_working), 'sessions': sessions}
+        write_json(path, activity, private=True)
 
 
 def append_history(mem, snapshot):
@@ -100,15 +116,14 @@ def append_history(mem, snapshot):
     same moment, so the whole read-modify-write runs under a lock: unlocked, two writers once interleaved their gzip
     members and damaged the archive."""
     history = mem / HISTORY
-    with open(mem / '.history.lock', 'a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        lines = history.read_text().splitlines() if history.exists() else []
+    with file_lock(mem / '.history.lock'):
+        lines = history.read_text(encoding='utf-8').splitlines() if history.exists() else []
         lines.append(json.dumps(snapshot, ensure_ascii=False))
         overflow, lines = lines[:-HISTORY_LIMIT], lines[-HISTORY_LIMIT:]
         if overflow:
             # Appending writes a new gzip member; readers see one continuous stream.
             archive = mem / ARCHIVE
-            with gzip.open(archive, 'at') as stream:
+            with gzip.open(archive, 'at', encoding='utf-8') as stream:
                 stream.write('\n'.join(overflow) + '\n')
             os.chmod(archive, 0o600)
         write_text(history, '\n'.join(lines) + '\n', private=True)
@@ -121,7 +136,8 @@ def save_checkpoint(mem, root, agent, payload):
     saved_at = now_iso()
     own = (read_json(mem / (agent + '.json'), {}) or {}).get('saved_at', '')
     # This turn began at UserPromptSubmit; edits before it (by anyone) are not this agent's update.
-    turn = ((read_json(mem / 'activity.json', {}) or {}).get(agent) or {})
+    sessions = agent_sessions((read_json(mem / 'activity.json', {}) or {}).get(agent))
+    turn = sessions.get(str(payload.get('session_id') or '')) or {}
     turn_start = turn.get('at') if turn.get('state') == 'working' else own
     previous = max((s.get('saved_at', '') for s in other_snapshots(mem, None, root)), default=None)
     found = changes.capture(root, mem, previous, f'{agent} {saved_at}')
@@ -204,7 +220,7 @@ def build_context(mem, root, agent, event, session_id):
     snapshots = other_snapshots(mem, agent, root)
     fresh = [s for s in snapshots if s.get('saved_at', '') > already.get(s.get('agent'), '')]
 
-    context = busy_warning(mem, agent)
+    context = busy_warning(mem, agent, session_id)
     if event == 'SessionStart' or (fresh and not already):
         context += BASE_CONTEXT + f'Second opinion from another agent: {baton_command()} review --agent NAME "<goal>"\n'
     if fresh:

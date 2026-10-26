@@ -4,36 +4,37 @@ Codex runs project and user hooks only after the user trusts them (Review hooks 
 changes. Its app-server reports that per hook (`hooks/list` -> trustStatus), so we ask it instead of guessing.
 Not a hook itself: this may take a moment and is only called by the panel and the CLI.
 """
-import glob
 import json
 import os
-import select
-import shutil
+import queue
 import subprocess
+import threading
 import time
 from pathlib import Path
 
 from . import init_project
 from .init_project import HOOK_FILES, has_baton_hooks, is_baton_hook
-from .project import find_root, load_agents, read_json, write_json
+from .project import agent_binary, find_root, kill_tree, load_agents, read_json, write_json
 
 CACHE = Path.home() / '.cache' / 'ai-baton' / 'hook-trust-v2.json'  # Bump the name when the result format changes.
 CODEX_EVENTS = {'sessionStart', 'userPromptSubmit', 'stop'}
 TIMEOUT = 8
 
 
-def codex_binary():
-    found = shutil.which('codex')
-    if found:
-        return found
-    bundled = glob.glob(str(Path.home() / '.vscode' / 'extensions' / 'openai.chatgpt-*' / 'bin' / '*' / 'codex'))
-    return max(bundled, key=os.path.getmtime) if bundled else None
-
-
 def codex_hooks(binary, cwd):
     """The hooks Codex would run in `cwd`, with trustStatus, from a short-lived app-server."""
     proc = subprocess.Popen([binary, 'app-server'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, text=True, bufsize=1)
+                            stderr=subprocess.DEVNULL, text=True, encoding='utf-8', errors='replace', bufsize=1)
+    # A reader thread, not select(): Windows cannot select() on a pipe.
+    lines = queue.Queue()
+
+    def read():
+        for line in proc.stdout:
+            lines.put(line)
+        lines.put(None)  # End of output.
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
     try:
         def send(message):
             proc.stdin.write(json.dumps({'jsonrpc': '2.0', **message}) + '\n')
@@ -42,29 +43,43 @@ def codex_hooks(binary, cwd):
         send({'id': 1, 'method': 'initialize', 'params': {'clientInfo': {'name': 'ai-baton', 'version': '1'}}})
         send({'method': 'initialized'})
         send({'id': 2, 'method': 'hooks/list', 'params': {'cwds': [str(cwd)]}})
-        # Raw reads with our own line framing: select() cannot see data a buffered reader already holds.
-        fd, pending, deadline = proc.stdout.fileno(), b'', time.time() + TIMEOUT
-        while time.time() < deadline:
-            ready, _, _ = select.select([fd], [], [], 0.5)
-            if not ready:
-                continue
-            chunk = os.read(fd, 65536)
-            if not chunk:
+        deadline = time.monotonic() + TIMEOUT
+        while True:
+            try:
+                line = lines.get(timeout=max(0, deadline - time.monotonic()))
+            except queue.Empty:
                 break
-            *lines, pending = (pending + chunk).split(b'\n')
-            for line in filter(None, lines):
-                message = json.loads(line)
-                if message.get('id') == 2:
-                    if 'error' in message:
-                        raise RuntimeError(message['error'].get('message', 'hooks/list failed'))
-                    return [h for entry in message['result']['data'] for h in entry.get('hooks', [])]
+            if line is None:
+                break
+            if not line.strip():
+                continue
+            message = json.loads(line)
+            if message.get('id') == 2:
+                if 'error' in message:
+                    raise RuntimeError(message['error'].get('message', 'hooks/list failed'))
+                return [h for entry in message['result']['data'] for h in entry.get('hooks', [])]
         raise TimeoutError('Codex did not answer')
     finally:
-        proc.kill()
+        # The whole tree on Windows: an npm-installed codex.cmd would otherwise leave the app-server running.
+        try:
+            if os.name == 'nt':
+                kill_tree(proc)
+            else:
+                proc.kill()
+                proc.wait(5)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        try:
+            proc.stdin.close()
+        except OSError:
+            pass
+        # Not stdout: closing it would wait for the reader, which a child still holding the pipe keeps reading. The
+        # reader is a daemon and ends at EOF.
+        reader.join(1)
 
 
 def codex_trust(root):
-    binary = codex_binary()
+    binary = agent_binary('codex')
     if not binary:
         return {'state': 'unknown', 'detail': 'Codex CLI not found'}
     files = [Path.home() / '.codex' / 'config.toml', init_project.user_home() / HOOK_FILES['codex'], root / HOOK_FILES['codex']]

@@ -1,11 +1,12 @@
 """`baton init`: set a project up for shared agent memory. Idempotent, never overwrites content."""
+import os
 import re
 from datetime import date
 from pathlib import Path
 
 from . import changes
-from .project import (HOME, MARKER, MEMORY_DIR, agent_binary, baton_command, load_agents, memory_dir, read_json,
-                      write_json)
+from .project import (HOME, MARKER, MEMORY_DIR, agent_binary, baton_command, hook_argv, load_agents, memory_dir,
+                      read_json, write_json, write_text)
 
 TEMPLATES = HOME / 'baton' / 'templates'
 BLOCK_RE = re.compile(r'<!-- BEGIN AI-BATON -->.*?<!-- END AI-BATON -->', re.S)
@@ -19,7 +20,7 @@ class InitError(Exception):
 
 
 def template(filename, **values):
-    text = (TEMPLATES / filename).read_text()
+    text = (TEMPLATES / filename).read_text(encoding='utf-8')
     for key, value in values.items():
         text = text.replace('{' + key + '}', value)
     return text
@@ -30,7 +31,7 @@ def ensure_file(path, content, log):
         log.append(f'= {path.name} already exists (unchanged)')
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
+    write_text(path, content)
     log.append(f'+ {path}')
 
 
@@ -38,10 +39,10 @@ def ensure_agents_md(root, block, log):
     path = root / 'AGENTS.md'
     if not path.exists():
         return ensure_file(path, template('AGENTS.md', name=root.name, block=block), log)
-    text = path.read_text()
+    text = path.read_text(encoding='utf-8')
     new = BLOCK_RE.sub(lambda _: block.strip(), text) if BLOCK_RE.search(text) else text.rstrip() + '\n\n' + block
     if new != text:
-        path.write_text(new)
+        write_text(path, new)
         log.append('~ AGENTS.md: added/refreshed the AI Baton section')
 
 
@@ -49,9 +50,9 @@ def ensure_claude_md(root, log):
     path = root / 'CLAUDE.md'
     if not path.exists():
         return ensure_file(path, template('CLAUDE.md', name=root.name), log)
-    text = path.read_text()
+    text = path.read_text(encoding='utf-8')
     if '@AGENTS.md' not in text:
-        path.write_text(text.rstrip() + '\n\nShared project rules:\n@AGENTS.md\n@docs/AGENT_HANDOFF.md\n')
+        write_text(path, text.rstrip() + '\n\nShared project rules:\n@AGENTS.md\n@docs/AGENT_HANDOFF.md\n')
         log.append('~ CLAUDE.md: added @AGENTS.md import')
 
 
@@ -70,9 +71,25 @@ def hook_command(agent, user_level=False):
     return f'{baton_command()} hook {agent}' + (' --global' if user_level else '')
 
 
+def hook_entry(agent, user_level=False):
+    """One hook as written to the agent's settings. Claude on Windows gets the exec form (no shell: it would be Git
+    Bash or PowerShell, which quote differently); everything else a command line."""
+    entry = {'type': 'command', 'command': hook_command(agent, user_level), 'timeout': 10}
+    if os.name == 'nt' and agent == 'claude':
+        python, script = (Path(p).as_posix() for p in hook_argv())
+        entry.update(command=python, args=[script, 'hook', agent] + (['--global'] if user_level else []))
+    return entry
+
+
+def hook_text(hook):
+    """A hook's full command line, also for the exec form (command plus args)."""
+    args = hook.get('args')
+    return ' '.join([str(hook.get('command', ''))] + ([str(a) for a in args] if isinstance(args, list) else []))
+
+
 # Our hook commands: `<python> "<...>/bin/baton" hook <agent>` with an optional `--global`, the script path quoted with
 # "..." or '...'. Only these (and the legacy agent-memory.py script) are ever replaced or removed.
-BATON_HOOK_RE = re.compile(r"""/bin/baton["']?\s+hook\s+[\w-]+(\s+--global)?\s*$""")
+BATON_HOOK_RE = re.compile(r"""[/\\]bin[/\\]baton["']?\s+hook\s+[\w-]+(\s+--global)?\s*$""")
 
 
 def is_baton_hook(command, agent=None):
@@ -91,13 +108,13 @@ def merge_hooks(root, agent, replace_legacy, log, user_level=False):
         groups = []
         for group in hooks[event]:
             kept = [h for h in group.get('hooks', [])
-                    if not is_baton_hook(h.get('command', ''))]
+                    if not is_baton_hook(hook_text(h))]
             if kept:
                 groups.append({**group, 'hooks': kept})
         hooks[event] = groups
     for event in EVENTS:
         hooks.setdefault(event, []).append(
-            {'hooks': [{'type': 'command', 'command': hook_command(agent, user_level), 'timeout': 10}]})
+            {'hooks': [hook_entry(agent, user_level)]})
     write_json(path, config)
     log.append(f'~ {"~/" if user_level else ""}{HOOK_FILES[agent]}: memory hooks {", ".join(EVENTS)}')
 
@@ -107,7 +124,7 @@ def baton_events(base, agent):
     config = read_json(base / HOOK_FILES[agent], {}) if (base / HOOK_FILES[agent]).exists() else {}
     hooks = (config.get('hooks') or {}) if isinstance(config, dict) else {}
     return {event for event, groups in hooks.items()
-            if any(is_baton_hook(h.get('command', '')) for g in groups for h in g.get('hooks', []))}
+            if any(is_baton_hook(hook_text(h)) for g in groups for h in g.get('hooks', []))}
 
 
 def has_baton_hooks(base, agent):
@@ -146,7 +163,7 @@ def remove_hooks(base, agent, log, label):
     for event in list(hooks):
         groups = []
         for group in hooks[event]:
-            kept = [h for h in group.get('hooks', []) if not is_baton_hook(h.get('command', ''))]
+            kept = [h for h in group.get('hooks', []) if not is_baton_hook(hook_text(h))]
             removed += len(group.get('hooks', [])) - len(kept)
             if kept:
                 groups.append({**group, 'hooks': kept})
@@ -190,9 +207,9 @@ def install_user_hooks(only=None):
 
 def ensure_gitignore(root, log):
     path = root / '.gitignore'
-    lines = path.read_text().splitlines() if path.exists() else []
+    lines = path.read_text(encoding='utf-8').splitlines() if path.exists() else []
     if not any(l.strip().rstrip('/') == MEMORY_DIR for l in lines):
-        path.write_text('\n'.join(lines + [f'{MEMORY_DIR}/']).lstrip('\n') + '\n')
+        write_text(path, '\n'.join(lines + [f'{MEMORY_DIR}/']).lstrip('\n') + '\n')
         log.append(f'~ .gitignore: {MEMORY_DIR}/')
 
 
@@ -219,7 +236,7 @@ def init(root, replace_legacy=False, only=None):
     if not marker.exists():
         write_json(marker, {'name': root.name, 'created': today, 'extraAgents': []})
         log.append(f'+ {marker}')
-    block = (TEMPLATES / 'agents_block.md').read_text()
+    block = (TEMPLATES / 'agents_block.md').read_text(encoding='utf-8')
     ensure_agents_md(root, block, log)
     ensure_claude_md(root, log)
     ensure_file(root / 'docs' / 'AGENT_HANDOFF.md', template('AGENT_HANDOFF.md', date=today), log)

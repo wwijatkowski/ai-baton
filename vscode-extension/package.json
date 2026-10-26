@@ -2,7 +2,7 @@
   "name": "ai-baton",
   "displayName": "AI Baton",
   "description": "A conductor for your AI coding agents: shared memory and handoffs between Claude Code and Codex, second-opinion reviews, usage and plan limits.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "preview": true,
   "publisher": "wwijatkowski",
   "license": "SEE LICENSE IN LICENSE",

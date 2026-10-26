@@ -5,10 +5,19 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
+import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+    import msvcrt
 
 HOME = Path(__file__).resolve().parents[1]
 MARKER = '.baton.json'
@@ -29,12 +38,39 @@ def baton_command():
     checkout's bin/baton. The interpreter is `python3` when that is the one running now (a stable, short command), else
     the full path of the running one, so hooks use the same Python the extension checked."""
     script = os.environ.get('BATON_LAUNCHER') or str(HOME / 'bin' / 'baton')
+    if os.name == 'nt':
+        # Codex runs hook commands in the session's shell, PowerShell on Windows (cmd.exe when none is found). A quoted
+        # program is only a string to PowerShell, so the interpreter goes unquoted (its short 8.3 name if the path has
+        # spaces), which both shells run; the script path is a quoted argument. Forward slashes: no escapes anywhere.
+        python, script = hook_argv()
+        python = Path(short_path(python)).as_posix()
+        if ' ' in python:  # Short names are turned off on this disk: PowerShell's call operator.
+            return f'& "{python}" "{Path(script).as_posix()}"'
+        return f'{python} "{Path(script).as_posix()}"'
     found = shutil.which('python3')
     same = found and os.path.realpath(found) == os.path.realpath(sys.executable)
     # Ordinary paths keep the "..." form (changing a hook command makes Codex ask for trust again); a path with
     # characters a shell would expand inside double quotes is quoted strictly.
     quoted = shlex.quote(script) if any(c in script for c in '$`"\\') else f'"{script}"'
     return f'{"python3" if same else shlex.quote(sys.executable)} {quoted}'
+
+
+def short_path(path):
+    """Windows: the 8.3 form of an existing path (no spaces), or the path itself."""
+    if os.name != 'nt' or ' ' not in str(path):
+        return str(path)
+    try:
+        import ctypes
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = ctypes.windll.kernel32.GetShortPathNameW(str(path), buffer, len(buffer))
+        return buffer.value if 0 < length < len(buffer) else str(path)
+    except (OSError, AttributeError):
+        return str(path)
+
+
+def hook_argv():
+    """[interpreter, launcher script] of the hook command, absolute (Windows hooks run them without a shell)."""
+    return [sys.executable, os.environ.get('BATON_LAUNCHER') or str(HOME / 'bin' / 'baton')]
 
 
 def agent_binary(kind):
@@ -44,7 +80,8 @@ def agent_binary(kind):
         return found
     patterns = {'codex': '~/.vscode/extensions/openai.chatgpt-*/bin/*/codex',
                 'claude': '~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude'}
-    candidates = glob.glob(os.path.expanduser(patterns.get(kind, '')))
+    exe = '.exe' if os.name == 'nt' else ''
+    candidates = glob.glob(os.path.expanduser(patterns.get(kind, '') + exe)) if kind in patterns else []
     return max(candidates, key=os.path.getmtime) if candidates else None
 
 
@@ -62,7 +99,7 @@ def find_root(start):
 
 
 def builtin_agents():
-    return json.loads((HOME / 'baton' / 'agents.json').read_text())
+    return json.loads((HOME / 'baton' / 'agents.json').read_text(encoding='utf-8'))
 
 
 def load_agents(root=None, hidden=False):
@@ -182,6 +219,34 @@ def is_working(entry):
     return True
 
 
+def agent_sessions(entry):
+    """An agent's activity per conversation. Files from before sessions were tracked hold one entry per agent: that
+    entry is its only session."""
+    if not isinstance(entry, dict):
+        return {}
+    sessions = entry.get('sessions')
+    if isinstance(sessions, dict):
+        return {str(k): v for k, v in sessions.items() if isinstance(v, dict)}
+    return {str(entry.get('session_id') or ''): entry}
+
+
+def moment(entry):
+    """When an activity entry was recorded, for ordering; unreadable times sort first."""
+    return aware(entry.get('at')) or datetime.min.replace(tzinfo=timezone.utc)
+
+
+def marked_working(entry):
+    """Recorded as working and not stale, without reading the transcript (cheap enough to run under a lock)."""
+    at = aware(entry.get('at'))
+    return entry.get('state') == 'working' and at is not None and datetime.now(timezone.utc) - at < WORKING_STALE
+
+
+def agent_activity(entry, working=is_working):
+    """The agent-level view of its sessions: the newest working one if any (the agent is busy), else the newest."""
+    ranked = sorted(agent_sessions(entry).values(), key=lambda e: (working(e), moment(e)), reverse=True)
+    return dict(ranked[0]) if ranked else None
+
+
 def clip(text, chars):
     """At most `chars` characters, cut at a word boundary with an ellipsis; None means no limit."""
     if chars is None or len(text) <= chars:
@@ -194,9 +259,51 @@ def clip(text, chars):
 
 def read_json(path, default=None):
     try:
-        return json.loads(Path(path).read_text())
+        return json.loads(Path(path).read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return default
+
+
+def kill_tree(proc, timeout=5):
+    """End a Windows process and everything it started (a .cmd wrapper's child too), bounded by `timeout` seconds,
+    then reap it. Falls back to killing only `proc` when taskkill fails or hangs."""
+    try:
+        subprocess.run(['taskkill', '/T', '/F', '/PID', str(proc.pid)], capture_output=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        proc.wait(timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout)
+
+
+@contextmanager
+def file_lock(path, timeout=3):
+    """Hold an exclusive lock on `path` (created if missing) across processes. Gives up with TimeoutError after
+    `timeout` seconds, so a stuck writer cannot hold a hook past its time limit."""
+    with open(path, 'a+b') as stream:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                if fcntl:
+                    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                else:
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)  # Byte 0, also when the file is empty.
+                break
+            except OSError:
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f'{path} is locked')
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            if fcntl:
+                fcntl.flock(stream, fcntl.LOCK_UN)
+            else:
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def write_json(path, data, private=False):
@@ -211,13 +318,21 @@ def write_text(path, text, private=False):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp = tempfile.mkstemp(dir=path.parent)
     try:
-        with os.fdopen(fd, 'w') as stream:
+        with os.fdopen(fd, 'w', encoding='utf-8', newline='') as stream:
             stream.write(text)
         if path.exists():
             os.chmod(temp, path.stat().st_mode & 0o777)
         elif not private:
             os.chmod(temp, 0o644)
-        os.replace(temp, path)
+        # Windows refuses to replace a file another process has open (a reader, an antivirus scan) for a moment.
+        for attempt in range(20):
+            try:
+                os.replace(temp, path)
+                break
+            except PermissionError:
+                if os.name != 'nt' or attempt == 19:
+                    raise
+                time.sleep(0.05)
     finally:
         if os.path.exists(temp):
             os.unlink(temp)

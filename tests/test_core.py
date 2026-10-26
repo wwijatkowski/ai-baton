@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from baton import changes, hook, init_project, models, project, recall, review, status  # noqa: E402
+from baton import changes, hook, hookcheck, init_project, models, project, recall, review, status  # noqa: E402
 from baton.project import read_json  # noqa: E402
 
 # Tests never read the real per-user registry (a hidden agent there would change what init does).
@@ -23,6 +23,43 @@ project.USER_AGENTS = Path(tempfile.gettempdir()) / 'ai-baton-tests-none' / 'age
 init_project.user_home = lambda: Path(tempfile.gettempdir()) / 'ai-baton-tests-none' / 'home'
 # Nor which agents happen to be installed here: tests assume both are.
 init_project.agent_binary = lambda kind: f'/usr/bin/{kind}'
+
+
+WINDOWS = os.name == 'nt'
+
+
+def rmtree(path):
+    """shutil.rmtree that also removes read-only files (git objects), which Windows refuses to delete otherwise."""
+    def retry(func, name, _):
+        os.chmod(name, 0o700)
+        func(name)
+    shutil.rmtree(path, onerror=retry)
+
+
+def fake_tool(folder, name, code):
+    """A stand-in command that runs the Python `code`: an executable script, or on Windows a .cmd wrapper (the form
+    npm installs agents in). Returns its path."""
+    script = folder / f'{name}.py'
+    script.write_text('import sys\nsys.stdout.reconfigure(encoding="utf-8")\n' + code, encoding='utf-8')
+    if WINDOWS:
+        tool = folder / f'{name}.cmd'
+        tool.write_text(f'@"{sys.executable}" "{script}" %*\n')
+    else:
+        tool = folder / name
+        tool.write_text(f'#!{sys.executable}\n' + script.read_text(encoding='utf-8'), encoding='utf-8')
+        tool.chmod(0o755)
+    return tool
+
+
+def alive(pid):
+    if WINDOWS:  # os.kill(pid, 0) would terminate the process on Windows.
+        out = subprocess.run(['tasklist', '/FI', f'PID eq {pid}', '/NH'], capture_output=True, text=True).stdout
+        return str(pid) in out
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 def payload(project, event, session='s1', **extra):
@@ -154,6 +191,16 @@ class HookTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout.strip(), '{}')
 
+    def test_hook_with_an_empty_environment(self):
+        # Codex starts Windows hooks with a cleared environment (no USERPROFILE, PATH, SYSTEMROOT): still a checkpoint.
+        # One unrelated variable: Python 3.9 on Windows cannot start a process with an entirely empty block.
+        result = subprocess.run([sys.executable, str(ROOT / 'bin/baton'), 'hook', 'codex'], env={'BATON_TEST': '1'},
+                                input=json.dumps(payload(self.project, 'Stop', 'bare', last_assistant_message='Done bare.')),
+                                capture_output=True, text=True, encoding='utf-8')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), '{}', result.stderr)
+        self.assertEqual(read_json(self.project / '.agent-memory/codex.json')['last_reply'], 'Done bare.')
+
 
 class MemoryTiersTest(unittest.TestCase):
     def setUp(self):
@@ -263,6 +310,59 @@ class MemoryTiersTest(unittest.TestCase):
         (self.project / '.agent-memory/activity.json').write_text(json.dumps({'codex': ['bad']}))
         self.assertIsNone(status.project_status(self.project)['agents'][1]['activity'])
 
+    def test_two_conversations_of_one_agent(self):
+        prompt = lambda session: hook.run('claude', payload(self.project, 'UserPromptSubmit', session, prompt='go'))
+        activity = lambda: read_json(self.project / '.agent-memory/activity.json')
+        prompt('a')
+        # A second Claude chat learns the first is still working, and the first one's state survives the second.
+        self.assertIn('another claude conversation may still be active', context(prompt('b')))
+        self.assertEqual(sorted(activity()['claude']['sessions']), ['a', 'b'])
+        self.stop('claude', 'Finished in chat b.', session='b')
+        claude = status.project_status(self.project)['agents'][0]
+        self.assertEqual(claude['activity']['state'], 'working')  # Chat a still works.
+        self.assertEqual(claude['activity']['session_id'], 'a')
+        # The handoff doc counts as this chat's update only if edited after this chat's own turn began.
+        (self.project / 'docs/AGENT_HANDOFF.md').write_text('# Handoff\nchat a was here\n')
+        prompt('b')
+        self.assertFalse(self.stop('claude', 'Chat b again.', session='b')['handoff_updated'])
+        self.stop('claude', 'Finished in chat a.', session='a')
+        self.assertEqual(status.project_status(self.project)['agents'][0]['activity']['state'], 'idle')
+        self.assertNotIn('WARNING', context(prompt('c')) or '')
+        # The older one-entry-per-agent format is read as that agent's only session.
+        (self.project / '.agent-memory/activity.json').write_text(json.dumps(
+            {'codex': {'state': 'working', 'at': datetime.now(timezone.utc).isoformat(), 'session_id': 'old'}}))
+        self.assertEqual(status.project_status(self.project)['agents'][1]['activity']['state'], 'working')
+        self.assertIn('agent codex may still be active', context(prompt('d')))
+        hook.run('codex', payload(self.project, 'Stop', 'old', last_assistant_message='Done.'))
+        self.assertEqual(sorted(activity()['codex']['sessions']), ['old'])
+        # Many conversations: only the newest finished ones are kept, but one still working always stays.
+        prompt('long')
+        for i in range(hook.MAX_SESSIONS + 3):
+            prompt(f'n{i}')
+            self.stop('claude', 'Quick one.', session=f'n{i}')
+        kept = activity()['claude']['sessions']
+        self.assertIn('long', kept)
+        self.assertNotIn('n0', kept)  # The oldest finished ones are dropped.
+        self.assertIn(f'n{hook.MAX_SESSIONS + 2}', kept)
+        self.assertLessEqual(sum(1 for e in kept.values() if e['state'] == 'idle'), hook.MAX_SESSIONS)
+        self.assertEqual(status.project_status(self.project)['agents'][0]['activity']['session_id'], 'long')
+        self.assertIn('another claude conversation', context(prompt('new')))
+        # Times are compared as times: the same moment with an offset is not "newer" because of how it is written.
+        from baton.project import agent_activity
+        later = {'sessions': {'x': {'state': 'idle', 'at': '2026-01-01T10:30:00+02:00'},  # 08:30 UTC
+                              'y': {'state': 'idle', 'at': '2026-01-01T09:00:00'}}}  # Naive means UTC.
+        self.assertEqual(agent_activity(later)['at'], '2026-01-01T09:00:00')
+
+    def test_parallel_hooks_keep_every_conversation(self):
+        script = ('import sys; sys.path.insert(0, sys.argv[1]); from baton import hook; '
+                  'hook.run("claude", {"cwd": sys.argv[2], "hook_event_name": "UserPromptSubmit", '
+                  '"session_id": "p" + sys.argv[3], "prompt": "go"})')
+        procs = [subprocess.Popen([sys.executable, '-c', script, str(ROOT), str(self.project), str(i)]) for i in range(8)]
+        for proc in procs:
+            self.assertEqual(proc.wait(60), 0)
+        sessions = read_json(self.project / '.agent-memory/activity.json')['claude']['sessions']
+        self.assertEqual(sorted(sessions), sorted(f'p{i}' for i in range(8)))
+
     def test_is_working_survives_odd_entries(self):
         from baton.project import is_working
         recent = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()  # Naive: read as UTC.
@@ -363,7 +463,7 @@ class MemoryTiersTest(unittest.TestCase):
     def test_git_project_points_at_commit(self):
         run = lambda *a: subprocess.run(['git', *a], cwd=self.project, check=True, capture_output=True)
         run('init', '-q')
-        shutil.rmtree(self.project / '.agent-memory' / changes.SHADOW_DIR)  # Init's baseline, taken before git existed.
+        rmtree(self.project / '.agent-memory' / changes.SHADOW_DIR)  # Init's baseline, taken before git existed.
         run('-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '-A')
         run('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'x')
         found = self.stop('claude', 'Done.')['changes']
@@ -437,7 +537,8 @@ class ModelsTest(unittest.TestCase):
         text = self.toml.read_text()
         self.assertTrue(text.startswith('model_reasoning_effort = "high"\nmodel = "gpt-b"\n'))
         self.assertIn('model = "not-top-level"', text)
-        self.assertEqual(self.toml.stat().st_mode & 0o777, 0o600)
+        if not WINDOWS:  # No Unix mode bits there.
+            self.assertEqual(self.toml.stat().st_mode & 0o777, 0o600)
         self.assertEqual((models.codex()['model'], models.codex()['effort']), ('gpt-b', 'high'))
         models.set_model('codex', 'default', 'default')
         self.assertEqual(self.toml.read_text(), 'service_tier = "default"\n\n[projects."/x"]\nmodel = "not-top-level"\n')
@@ -564,18 +665,23 @@ class ReviewTest(unittest.TestCase):
         self.bin = Path(self.tmp.name) / 'bin'
         self.bin.mkdir()
         # Fake Codex: writes the prompt and stdin it got into the -o file. Fake Claude: prints them.
-        fake = {'codex': 'args="$*"; out=""; while [ $# -gt 1 ]; do [ "$1" = -o ] && out=$2; shift; done; '
-                         '{ echo "codex args: $args"; echo "codex saw: $1"; echo "env: $BATON_REVIEW"; cat; } > "$out"',
-                'claude': 'echo "claude args: $*"; echo "env: $BATON_REVIEW"; cat'}
-        for name, body in fake.items():
-            (self.bin / name).write_text(f'#!/bin/sh\n{body}\n')
-            (self.bin / name).chmod(0o755)
-        self.patch = mock.patch.object(review, 'binary', lambda kind: str(self.bin / kind))
+        self.tools = {}
+        self.fake('codex', "import os\nargs = sys.argv[1:]\nout = open(args[args.index('-o') + 1], 'w', encoding='utf-8')\n"
+                           "out.write('codex args: ' + ' '.join(args) + '\\ncodex saw: ' + args[-1] + '\\nenv: ' + "
+                           "os.environ.get('BATON_REVIEW', '') + '\\n')\n"
+                           "out.write(sys.stdin.buffer.read().decode('utf-8'))\n")
+        self.fake('claude', "import os\nprint('claude args: ' + ' '.join(sys.argv[1:]))\n"
+                            "print('env: ' + os.environ.get('BATON_REVIEW', ''))\n"
+                            "print(sys.stdin.buffer.read().decode('utf-8'))\n")
+        self.patch = mock.patch.object(review, 'binary', lambda kind: str(self.tools[kind]))
         self.patch.start()
 
     def tearDown(self):
         self.patch.stop()
         self.tmp.cleanup()
+
+    def fake(self, name, code):
+        self.tools[name] = fake_tool(self.bin, name, code)
 
     def test_reviews_uncommitted_changes_including_new_files(self):
         (self.project / 'NEW.md').write_text('brand new line\n')
@@ -627,7 +733,7 @@ class ReviewTest(unittest.TestCase):
         (fresh / 'staged.py').write_text('print("staged")\n')
         subprocess.run(['git', 'add', 'staged.py'], cwd=fresh, check=True)
         (fresh / 'staged.py').write_text('print("edited after staging")\n')
-        (fresh / 'café.py').write_text('print("café")\n')
+        (fresh / 'café.py').write_text('print("café")\n', encoding='utf-8')
         diff, what, notes = review.collect_diff(fresh)
         self.assertIn('edited after staging', diff)
         self.assertNotIn('print("staged")', diff)  # Only the final content, not the intermediate staged one.
@@ -654,7 +760,7 @@ class ReviewTest(unittest.TestCase):
             self.assertIn('files in the commit', notes)
             self.assertIn('one.txt', notes)
         # A stalled git is stopped by the deadline instead of hanging the review.
-        stalled = subprocess.Popen(['sleep', '30'], stdout=subprocess.PIPE)  # Real, created before the patch.
+        stalled = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], stdout=subprocess.PIPE)  # Real, created before the patch.
         with mock.patch.object(review, 'GIT_TIMEOUT', 0.5), mock.patch.object(review.subprocess, 'Popen', return_value=stalled):
             started = time.time()
             with self.assertRaises(review.ReviewError) as caught:
@@ -694,7 +800,7 @@ class ReviewTest(unittest.TestCase):
         self.assertNotIn('f04.txt', notes)
         # External diff programs configured in git are never run.
         marker = Path(self.tmp.name) / 'ext-ran'
-        subprocess.run(['git', 'config', 'diff.external', f'sh -c "touch {marker}"'], cwd=fresh, check=True)
+        subprocess.run(['git', 'config', 'diff.external', f'sh -c "touch {marker.as_posix()}"'], cwd=fresh, check=True)
         review.collect_diff(fresh)
         self.assertFalse(marker.exists())
         with self.assertRaises(review.ReviewError):
@@ -702,30 +808,38 @@ class ReviewTest(unittest.TestCase):
         with self.assertRaises(review.ReviewError):
             review.collect_diff(Path(self.tmp.name))  # Not a repository.
         # Text plus a failing exit code is an error, not a review.
-        (self.bin / 'claude').write_text('#!/bin/sh\necho partial answer\nexit 2\n')
+        self.fake('claude', 'print("partial answer")\nraise SystemExit(2)\n')
         (self.project / 'X').write_text('x')
         with self.assertRaises(review.ReviewError):
             review.review(self.project, 'claude')
 
     def test_cancel_stops_the_reviewer(self):
         import signal
-        # A reviewer that ignores SIGTERM still has to go (SIGKILL after the grace period).
-        (self.bin / 'codex').write_text(f"#!/bin/sh\ntrap '' TERM\nsleep 30 &\necho $! > {self.tmp.name}/child\n"
-                                        f"echo $$ > {self.tmp.name}/pid\nsleep 30\n")
+        # A reviewer that ignores SIGTERM still has to go (SIGKILL after the grace period), and so does its child.
+        # On Windows the extension ends the whole tree with taskkill instead of signalling the CLI.
+        tmp = Path(self.tmp.name)
+        self.fake('codex', 'import os, signal, subprocess, time\n'
+                           'if hasattr(signal, "SIGTERM"): signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+                           'child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])\n'
+                           f'open({str(tmp / "child")!r}, "w").write(str(child.pid))\n'
+                           f'open({str(tmp / "pid")!r}, "w").write(str(os.getpid()))\n'
+                           'time.sleep(30)\n')
         (self.project / 'X').write_text('x')
         cli = subprocess.Popen([sys.executable, str(ROOT / 'bin' / 'baton'), 'review', '--agent', 'codex', '--path',
-                                str(self.project)], env={**os.environ, 'PATH': f'{self.bin}:{os.environ["PATH"]}'})
-        pid_file = Path(self.tmp.name) / 'pid'
-        for _ in range(100):
+                                str(self.project)], env={**os.environ, 'PATH': f'{self.bin}{os.pathsep}{os.environ["PATH"]}'})
+        pid_file = tmp / 'pid'
+        for _ in range(200):
             if pid_file.exists() and pid_file.read_text().strip():
                 break
             time.sleep(0.05)
-        cli.send_signal(signal.SIGTERM)
+        if WINDOWS:
+            subprocess.run(['taskkill', '/T', '/F', '/PID', str(cli.pid)], capture_output=True)
+        else:
+            cli.send_signal(signal.SIGTERM)
         cli.wait(timeout=15)
-        time.sleep(0.2)
+        time.sleep(0.5)
         for name in ('pid', 'child'):  # The reviewer and a process it started.
-            with self.assertRaises(ProcessLookupError, msg=name):
-                os.kill(int((Path(self.tmp.name) / name).read_text()), 0)
+            self.assertFalse(alive(int((tmp / name).read_text())), name)
 
     def test_clean_tree_with_a_conversation_reviews_its_commits_or_its_replies(self):
         g = ['git', '-c', 'user.email=t@t', '-c', 'user.name=t']
@@ -790,7 +904,7 @@ class ReviewTest(unittest.TestCase):
         # Git filters from .gitattributes (external programs) never run while collecting.
         marker = Path(self.tmp.name) / 'filter-ran'
         config = Path(self.tmp.name) / 'gitconfig'
-        config.write_text(f'[filter "evil"]\n\tclean = "touch {marker}; cat"\n')
+        config.write_text(f'[filter "evil"]\n\tclean = "touch {marker.as_posix()}; cat"\n')
         (plain / '.gitattributes').write_text('*.md filter=evil\n')
         (plain / 'notes.md').write_text('third draft\n')
         with mock.patch.dict(os.environ, {'GIT_CONFIG_GLOBAL': str(config)}):
@@ -817,11 +931,11 @@ class ReviewTest(unittest.TestCase):
         older = Path(self.tmp.name) / 'older-nogit'
         older.mkdir()
         init_project.init(older)
-        shutil.rmtree(older / '.agent-memory' / changes.SHADOW_DIR)
+        rmtree(older / '.agent-memory' / changes.SHADOW_DIR)
         hook.run('codex', payload(older, 'UserPromptSubmit', 'c1', prompt='go'))
         self.assertTrue((older / '.agent-memory' / changes.SHADOW_DIR).is_dir())
         # Out of time or interrupted (an empty shadow repo): no baseline now, a retry at the next prompt.
-        shutil.rmtree(older / '.agent-memory' / changes.SHADOW_DIR)
+        rmtree(older / '.agent-memory' / changes.SHADOW_DIR)
         with mock.patch.object(changes, 'BASELINE_BUDGET', 0):
             hook.run('codex', payload(older, 'UserPromptSubmit', 'c1', prompt='go'))
         shadow = older / '.agent-memory' / changes.SHADOW_DIR
@@ -831,7 +945,7 @@ class ReviewTest(unittest.TestCase):
         # Snapshots never run git filters (external programs) from the project's .gitattributes.
         marker = Path(self.tmp.name) / 'filter-ran'
         config = Path(self.tmp.name) / 'gitconfig'
-        config.write_text(f'[filter "evil"]\n\tclean = "touch {marker}; cat"\n')
+        config.write_text(f'[filter "evil"]\n\tclean = "touch {marker.as_posix()}; cat"\n')
         filtered = Path(self.tmp.name) / 'filtered-nogit'
         filtered.mkdir()
         (filtered / '.gitattributes').write_text('* filter=evil\n')
@@ -844,7 +958,7 @@ class ReviewTest(unittest.TestCase):
         legacy = Path(self.tmp.name) / 'legacy-nogit'
         legacy.mkdir()
         init_project.init(legacy)
-        shutil.rmtree(legacy / '.agent-memory' / changes.SHADOW_DIR)
+        rmtree(legacy / '.agent-memory' / changes.SHADOW_DIR)
         hook.run('codex', payload(legacy, 'Stop', 'c0', last_assistant_message='Codex did earlier work.'))
         (legacy / 'mine.txt').write_text('mine\n')
         hook.run('claude', payload(legacy, 'Stop', 's1', last_assistant_message='Claude added mine.txt.'))
@@ -881,6 +995,7 @@ class ReviewTest(unittest.TestCase):
         self.assertIn('Read them', result['review'])
         self.assertIn('more changed files were not recorded by name', result['review'])
 
+    @unittest.skipIf(WINDOWS, 'SIGTERM handling; a stand-in git on PATH would also have to be an .exe')
     def test_cancel_while_collecting_stops_git(self):
         import signal
         real_git = shutil.which('git')
@@ -916,6 +1031,8 @@ class ReviewTest(unittest.TestCase):
         self.assertIn('inner change', text)
         self.assertNotIn('outer change', text)
         # Individually fine but together slow git calls hit the shared deadline.
+        if WINDOWS:
+            return  # A stand-in git on PATH would have to be an .exe.
         real_git = shutil.which('git')
         slow = self.bin / 'git'
         slow.write_text(f'#!/bin/sh\n[ "$1" = diff ] && sleep 0.4\nexec {real_git} "$@"\n')
@@ -929,11 +1046,47 @@ class ReviewTest(unittest.TestCase):
         self.assertIn('collecting the changes', str(caught.exception))
 
     def test_empty_answer_is_an_error(self):
-        (self.bin / 'codex').write_text('#!/bin/sh\nexit 3\n')
+        self.fake('codex', 'raise SystemExit(3)\n')
         (self.project / 'X').write_text('x')
         with self.assertRaises(review.ReviewError):
             review.review(self.project, 'codex')
 
+
+
+class HookTrustTest(unittest.TestCase):
+    """hookcheck.codex_hooks talks JSON-RPC to a short-lived `codex app-server` (stand-ins here)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+
+    def test_reads_the_answer_split_across_writes(self):
+        server = fake_tool(self.dir, 'codex', 'import json\n'
+                           'for line in sys.stdin:\n'
+                           '    msg = json.loads(line)\n'
+                           '    if msg.get("id") == 2:\n'
+                           '        out = json.dumps({"id": 2, "result": {"data": [{"hooks": [{"eventName": "stop", "command": "x"}]}]}})\n'
+                           '        sys.stdout.write("\\n" + out[:10]); sys.stdout.flush()\n'
+                           '        sys.stdout.write(out[10:] + "\\n"); sys.stdout.flush()\n')
+        self.assertEqual(hookcheck.codex_hooks(str(server), self.dir), [{'eventName': 'stop', 'command': 'x'}])
+
+    def test_a_silent_server_and_its_child_are_stopped(self):
+        # On Windows the stand-in is a .cmd wrapper, as npm installs Codex: the app-server behind it must go too.
+        server = fake_tool(self.dir, 'codex', 'import os, subprocess, time\n'
+                           'child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])\n'
+                           f'open({str(self.dir / "pids")!r}, "w").write(f"{{os.getpid()}} {{child.pid}}")\n'
+                           'time.sleep(30)\n')
+        with mock.patch.object(hookcheck, 'TIMEOUT', 2):
+            started = time.time()
+            with self.assertRaises(TimeoutError):
+                hookcheck.codex_hooks(str(server), self.dir)
+        self.assertLess(time.time() - started, 15)
+        time.sleep(0.5)
+        server_pid, child_pid = map(int, (self.dir / 'pids').read_text().split())
+        self.assertFalse(alive(server_pid))
+        if WINDOWS:  # On Unix the child is only re-parented; a killed real app-server takes its own children along.
+            self.assertFalse(alive(child_pid))
 
 
 class LicenseTest(unittest.TestCase):
@@ -941,6 +1094,20 @@ class LicenseTest(unittest.TestCase):
         import shlex
         from baton.project import baton_command
         plain = '/Users/me/.ai-baton/bin/baton'
+        if WINDOWS:
+            # An unquoted interpreter (PowerShell, Codex's shell there, and cmd both run it) and a quoted script.
+            launcher = 'C:\\Users\\Jan Kowalski\\.ai-baton\\bin\\baton'
+            with mock.patch.dict(os.environ, {'BATON_LAUNCHER': launcher}):
+                command = baton_command()
+            self.assertEqual(command, f'{Path(sys.executable).as_posix()} "C:/Users/Jan Kowalski/.ai-baton/bin/baton"')
+            line = f'{Path(sys.executable).as_posix()} -c "print(41 + 1)"'
+            # As Codex starts them: its PowerShell, or `cmd.exe /C "<line>"` (a raw command line) when none is found.
+            for shell in (['powershell', '-NoProfile', '-Command', line], f'cmd.exe /C "{line}"'):
+                run = subprocess.run(shell, capture_output=True, text=True)
+                self.assertEqual(run.stdout.strip(), '42', (shell, run.stderr))
+            with mock.patch.object(project, 'short_path', lambda p: 'C:/Program Files/Python/python.exe'):
+                self.assertTrue(baton_command().startswith('& "C:/Program Files/Python/python.exe" '))
+            return
         with mock.patch.dict(os.environ, {'BATON_LAUNCHER': plain}):
             self.assertTrue(baton_command().endswith(f'"{plain}"'))  # Today's form, so hooks stay unchanged.
         odd = '/tmp/a $(touch x) `b` "c"/baton'
@@ -957,7 +1124,7 @@ class LicenseTest(unittest.TestCase):
 
 
 class CliInstallTest(unittest.TestCase):
-    """vscode-extension/cli-install.js: versions side by side, `current` switched by rename, a stable launcher."""
+    """vscode-extension/cli-install.js: versions side by side, current-version switched by rename, a stable launcher."""
 
     def run_node(self, script):
         if not shutil.which('node'):
@@ -979,27 +1146,37 @@ class CliInstallTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         bundled, target = Path(tmp.name) / 'cli', Path(tmp.name) / 'home' / '.ai-baton'
+        current = lambda: (target / 'current-version').read_text().strip()
         call = f'console.log(JSON.stringify(installCli({json.dumps(str(bundled))}, {json.dumps(str(target))})))'
         self.bundle(bundled, '0.3.0')
         self.assertEqual(json.loads(self.run_node(call)), {'home': str(target), 'updated': True})
-        self.assertEqual(os.readlink(target / 'current'), 'versions/0.3.0')
-        self.assertTrue(os.access(target / 'bin' / 'baton', os.X_OK))
+        self.assertEqual(current(), '0.3.0')
+        if not WINDOWS:
+            self.assertTrue(os.access(target / 'bin' / 'baton', os.X_OK))
         self.assertFalse(json.loads(self.run_node(call))['updated'])  # Same version: nothing to do.
         # The launcher runs the current version and hooks installed through it point at the launcher itself.
-        env = {**os.environ, 'HOME': str(Path(tmp.name) / 'home')}
+        home = Path(tmp.name) / 'home'
+        env = {**os.environ, 'HOME': str(home), 'USERPROFILE': str(home)}
         run = subprocess.run([sys.executable, str(target / 'bin' / 'baton'), 'install-hooks', '--agents=claude'],
                              capture_output=True, text=True, env=env)
         self.assertEqual(run.returncode, 0, run.stderr)
-        command = json.loads((Path(tmp.name) / 'home' / '.claude' / 'settings.json').read_text())['hooks']['Stop'][0]['hooks'][0]['command']
-        self.assertIn(f'"{target / "bin" / "baton"}" hook claude --global', command)
-        # An update switches `current` and keeps the previous version for hooks still running it.
+        hook = json.loads((home / '.claude' / 'settings.json').read_text())['hooks']['Stop'][0]['hooks'][0]
+        command = init_project.hook_text(hook)
+        self.assertIn(f'{(target / "bin" / "baton").as_posix()}', command.replace('\\', '/'))
+        self.assertTrue(command.endswith(' hook claude --global'), command)
+        self.assertTrue(init_project.is_baton_hook(command, 'claude'))
+        # An update switches current-version and keeps the previous version for hooks still running it.
         self.bundle(bundled, '0.3.1')
         launcher = (target / 'bin' / 'baton').read_text()
         self.assertTrue(json.loads(self.run_node(call))['updated'])
-        self.assertEqual(os.readlink(target / 'current'), 'versions/0.3.1')
+        self.assertEqual(current(), '0.3.1')
+        if not WINDOWS:
+            self.assertEqual(os.readlink(target / 'current'), 'versions/0.3.1')
         self.assertEqual(sorted(os.listdir(target / 'versions')), ['0.3.0', '0.3.1'])
         self.assertEqual((target / 'bin' / 'baton').read_text(), launcher)  # Hook command unchanged.
-        self.assertIn('os.path.realpath', (target / 'bin' / 'baton').read_text())  # One version per process.
+        status = subprocess.run([sys.executable, str(target / 'bin' / 'baton'), 'status', str(tmp.name)],
+                                capture_output=True, text=True, env=env)
+        self.assertEqual(status.returncode, 0, status.stderr)
         # A lock whose owner is gone is taken over; a live owner's lock is respected.
         self.bundle(bundled, '0.3.2')
         (target / '.install.lock').write_text('999999:0:dead')
@@ -1010,13 +1187,32 @@ class CliInstallTest(unittest.TestCase):
         self.bundle(bundled, '0.3.2')
         (target / '.install.lock').write_text(f'{os.getpid()}:0:alive')
         self.assertEqual(json.loads(self.run_node(call)).get('busy'), True)
-        self.assertEqual(os.readlink(target / 'current'), 'versions/0.3.1')
+        self.assertEqual(current(), '0.3.1')
         self.assertEqual((target / '.install.lock').read_text(), f'{os.getpid()}:0:alive')  # Not someone else's to remove.
         (target / '.install.lock').unlink()
         self.run_node(call)
         self.assertEqual(sorted(os.listdir(target / 'versions')), ['0.3.1', '0.3.2'])  # Older ones are dropped.
         # No bundle (a development copy of the extension): nothing to install.
         self.assertEqual(self.run_node(f'console.log(JSON.stringify(installCli("/nonexistent", {json.dumps(str(target))})))'), 'null')
+
+    @unittest.skipIf(WINDOWS, 'installs from before current-version used a symlink, which Windows did not support anyway')
+    def test_upgrades_a_symlink_install(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        bundled, target = Path(tmp.name) / 'cli', Path(tmp.name) / '.ai-baton'
+        self.bundle(bundled, '0.3.0')
+        shutil.copytree(bundled, target / 'versions' / '0.3.0')
+        os.symlink('versions/0.3.0', target / 'current')
+        self.bundle(bundled, '0.4.0')
+        self.run_node(f'installCli({json.dumps(str(bundled))}, {json.dumps(str(target))})')
+        self.assertEqual((target / 'current-version').read_text().strip(), '0.4.0')
+        self.assertEqual(os.readlink(target / 'current'), 'versions/0.4.0')  # Still there for older launchers.
+        self.assertEqual(sorted(os.listdir(target / 'versions')), ['0.3.0', '0.4.0'])  # The old one may still run.
+        # The new launcher still works with only the old symlink (current-version not written yet).
+        (target / 'current-version').unlink()
+        run = subprocess.run([sys.executable, str(target / 'bin' / 'baton'), 'status', str(tmp.name)],
+                             capture_output=True, text=True)
+        self.assertEqual(run.returncode, 0, run.stderr)
 
 
 class WebviewTest(unittest.TestCase):
@@ -1027,6 +1223,13 @@ class WebviewTest(unittest.TestCase):
             self.skipTest('node is not installed')
         result = subprocess.run(['node', str(ROOT / 'tests' / 'webview_smoke.js')], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_extension_flows(self):
+        # extension.js against a fake VS Code API and CLI: review, initialize, agents, Python lookup, cancelling.
+        if not shutil.which('node'):
+            self.skipTest('node is not installed')
+        result = subprocess.run(['node', str(ROOT / 'tests' / 'extension_flows.js')], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == '__main__':

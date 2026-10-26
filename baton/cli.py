@@ -29,6 +29,10 @@ def print_usage(report):
 
 
 def main(argv=None):
+    # Agents and the extension talk UTF-8 JSON; Windows would otherwise use its ANSI code page for the pipes.
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        if stream and hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(prog='baton', description='AI Baton')
     sub = parser.add_subparsers(dest='command', required=True)
     p = sub.add_parser('hook', help='lifecycle hook (called by agents)')
