@@ -1,13 +1,15 @@
 // Installs the CLI bundled in the extension (cli/) to a stable folder, by default ~/.ai-baton.
 // Hooks in the agents' settings run ~/.ai-baton/bin/baton, a tiny launcher that never changes, so the hook command
 // stays identical across updates (Codex asks for trust again whenever it changes). Each version lives in
-// versions/<version>; `current` points at one and is switched with a rename, so a hook running during an update sees
-// either the old or the new CLI, never a half-copied one. A lock keeps two VS Code windows from installing at once.
+// versions/<version>; the current-version file names one and is replaced with a rename, so a hook running during an update sees
+// either the old or the new CLI, never a half-copied one. A file, not a symlink: Windows needs extra rights for those.
+// A lock keeps two VS Code windows from installing at once.
 // No VS Code dependency, so tests can run it with plain Node.
 const fs = require('fs');
 const path = require('path');
 
 const VERSION_FILE = 'VERSION';
+const CURRENT_FILE = 'current-version';  // Not 'CURRENT': macOS and Windows would take it for the old 'current'.
 const LOCK_STALE_MS = 2 * 60 * 1000;
 const LAUNCHER = `#!/usr/bin/env python3
 # AI Baton launcher: runs the installed version in ../current. Hooks call this file; it never changes.
@@ -15,8 +17,14 @@ import os
 import sys
 
 os.environ['BATON_LAUNCHER'] = os.path.abspath(__file__)
-# Resolve \`current\` once: every import of this process then comes from one version, even if an update switches it.
-sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'current')))
+home = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Read current-version once: every import of this process then comes from one version, even if an update switches it.
+try:
+    with open(os.path.join(home, 'current-version'), encoding='utf-8') as pointer:
+        version = os.path.join(home, 'versions', pointer.read().strip())
+except OSError:
+    version = os.path.realpath(os.path.join(home, 'current'))  # Installed before current-version existed.
+sys.path.insert(0, version)
 from baton.cli import main  # noqa: E402
 
 main()
@@ -30,11 +38,30 @@ function readVersion(dir) {
   }
 }
 
-// Replace `file` with `content` in one step (write a temp file, then rename over it).
+// Replace `file` with `content` in one step (write a temp file, then rename over it). Windows refuses the rename for a
+// moment while another process (a hook starting, an antivirus scan) has the file open, so that is retried briefly.
 function writeAtomic(file, content, mode) {
   const tmp = `${file}.tmp-${process.pid}`;
   fs.writeFileSync(tmp, content, { mode });
-  fs.renameSync(tmp, file);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return fs.renameSync(tmp, file);
+    } catch (error) {
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt >= 20) {
+        fs.rmSync(tmp, { force: true });
+        throw error;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+  }
+}
+
+function currentVersion(target) {
+  try {
+    return fs.readFileSync(path.join(target, CURRENT_FILE), 'utf8').trim();
+  } catch {
+    return null;
+  }
 }
 
 function alive(pid) {
@@ -85,9 +112,13 @@ function releaseLock(target, token) {
 function installCli(bundled, target) {
   const version = readVersion(bundled);
   if (!version) return null;
-  const current = path.join(target, 'current');
   const launcher = path.join(target, 'bin', 'baton');
-  if (readVersion(current) === version && fs.existsSync(launcher)) return { home: target, updated: false };
+  // The version in use now: current-version, or the `current` symlink of installs from before it existed.
+  const installed = currentVersion(target) || readVersion(path.join(target, 'current'));
+  if (currentVersion(target) === version && readVersion(path.join(target, 'versions', version)) === version &&
+      fs.existsSync(launcher)) {
+    return { home: target, updated: false };
+  }
   fs.mkdirSync(path.join(target, 'versions'), { recursive: true });
   fs.mkdirSync(path.join(target, 'bin'), { recursive: true });
   const token = takeLock(target);
@@ -103,19 +134,23 @@ function installCli(bundled, target) {
       fs.renameSync(staging, dest);
     }
     writeAtomic(launcher, LAUNCHER, 0o755);
-    const link = `${current}.tmp-${process.pid}`;
-    fs.rmSync(link, { force: true });
-    fs.symlinkSync(path.join('versions', version), link);
-    fs.renameSync(link, current);
-    // Keep the new version and the one before it (a hook may still be running it); drop older ones.
-    const keep = new Set([version]);
-    const versions = fs.readdirSync(path.join(target, 'versions'))
-      .filter((name) => !name.includes('.tmp-'))
-      .map((name) => [name, fs.statSync(path.join(target, 'versions', name)).mtimeMs])
-      .sort((a, b) => b[1] - a[1]);
-    for (const [name] of versions) {
-      if (keep.size < 2) keep.add(name);
-      if (!keep.has(name)) fs.rmSync(path.join(target, 'versions', name), { recursive: true, force: true });
+    writeAtomic(path.join(target, CURRENT_FILE), `${version}\n`, 0o644);
+    // The symlink older versions used: nothing reads it once current-version exists.
+    try {
+      if (fs.lstatSync(path.join(target, 'current')).isSymbolicLink()) fs.unlinkSync(path.join(target, 'current'));
+    } catch {
+      // Not there.
+    }
+    // Keep the new version and the one before it (a hook may still be running it); drop older ones. Best effort: the
+    // new version is already in use, and a folder Windows keeps busy now goes at the next update.
+    const keep = new Set([version, installed].filter(Boolean));
+    for (const name of fs.readdirSync(path.join(target, 'versions'))) {
+      if (keep.has(name) && !name.includes('.tmp-')) continue;
+      try {
+        fs.rmSync(path.join(target, 'versions', name), { recursive: true, force: true });
+      } catch {
+        // Retried at the next update.
+      }
     }
     return { home: target, updated: true };
   } finally {

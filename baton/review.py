@@ -73,7 +73,8 @@ def git(root, *args, ok=(0,), limit=None, prefix=()):
             proc.wait()
             ACTIVE.remove((proc, False))
             raise ReviewError(f'collecting the changes took longer than {COLLECT_TIMEOUT} s')
-        watchdog = threading.Timer(budget, proc.kill)
+        fired = []  # The watchdog's kill; the exit code cannot tell (Windows reports 1, not a signal).
+        watchdog = threading.Timer(budget, lambda: (fired.append(True), proc.kill()))
         watchdog.start()
         cut = False  # Set before reading: a cancel can interrupt the read, and `finally` still needs it.
         try:
@@ -83,7 +84,7 @@ def git(root, *args, ok=(0,), limit=None, prefix=()):
                 proc.kill()
             proc.wait()
         finally:
-            timed_out = not watchdog.is_alive() and not cut and proc.returncode is not None and proc.returncode < 0
+            timed_out = bool(fired) and not cut
             watchdog.cancel()
             ACTIVE.remove((proc, False))
             proc.stdout.close()

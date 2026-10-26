@@ -52,11 +52,12 @@ function config(key) {
 const { installCli } = require('./cli-install');
 const MIN_PYTHON = [3, 9];
 let cliHome;
+let python = null;  // { command, args }: how to run Python 3, found by checkPython.
 let ready = false;
 let initGeneration = 0;
 
 function expandHome(p) {
-  return p.replace(/^~(?=$|\/)/, os.homedir());
+  return p.replace(/^~(?=$|[\\/])/, os.homedir());
 }
 
 // Which CLI to run: a folder set in aiBaton.home (a development checkout), else the CLI bundled with the extension,
@@ -81,22 +82,45 @@ function batonPath() {
   return path.join(cliHome, 'bin', 'baton');
 }
 
-// The CLI and hooks need Python 3.9+ (macOS ships 3.9 with the command line tools). Returns an error text or null.
-function checkPython() {
+// Ways to run Python, in order. aiBaton.python wins; on Windows the default `python3` is often only the Microsoft Store
+// stub, so the py launcher and `python` are tried first there.
+function pythonCandidates() {
+  const configured = config('python');
+  if (process.platform !== 'win32' || configured !== 'python3') return [{ command: configured, args: [] }];
+  return [{ command: 'py', args: ['-3'] }, { command: 'python', args: [] }, { command: 'python3', args: [] }];
+}
+
+function pythonVersion(candidate) {
   return new Promise((resolve) => {
-    cp.execFile(config('python'), ['-c', 'import sys; print("%d.%d" % sys.version_info[:2])'], { timeout: 15000 },
-      (error, stdout) => {
+    cp.execFile(candidate.command, [...candidate.args, '-c', 'import sys; print("%d.%d" % sys.version_info[:2])'],
+      { timeout: 15000 }, (error, stdout) => {
         const [major, minor] = String(stdout).trim().split('.').map(Number);
-        if (error || !major) {
-          return resolve(`AI Baton needs Python ${MIN_PYTHON.join('.')} or newer, and "${config('python')}" was not found. ` +
-            'Install Python 3 (on macOS: xcode-select --install), or set aiBaton.python to its path.');
-        }
-        if (major < MIN_PYTHON[0] || (major === MIN_PYTHON[0] && minor < MIN_PYTHON[1])) {
-          return resolve(`AI Baton needs Python ${MIN_PYTHON.join('.')} or newer; "${config('python')}" is ${major}.${minor}.`);
-        }
-        resolve(null);
+        resolve(error || !major ? null : [major, minor]);
       });
   });
+}
+
+// The CLI and hooks need Python 3.9+ (macOS ships 3.9 with the command line tools). Sets `python`; returns an error
+// text or null.
+async function checkPython() {
+  const name = config('python');
+  const install = process.platform === 'darwin' ? 'Install Python 3 (on macOS: xcode-select --install)'
+    : 'Install Python 3 from python.org';
+  let found = null;
+  for (const candidate of pythonCandidates()) {
+    const version = await pythonVersion(candidate);
+    if (!version) continue;
+    found = found || version;
+    if (version[0] > MIN_PYTHON[0] || (version[0] === MIN_PYTHON[0] && version[1] >= MIN_PYTHON[1])) {
+      python = candidate;
+      return null;
+    }
+  }
+  python = null;
+  if (!found) {
+    return `AI Baton needs Python ${MIN_PYTHON.join('.')} or newer, and "${name}" was not found. ${install}, or set aiBaton.python to its path.`;
+  }
+  return `AI Baton needs Python ${MIN_PYTHON.join('.')} or newer; "${name}" is ${found.join('.')}.`;
 }
 
 function workspaceRoot() {
@@ -113,7 +137,8 @@ function baton(args, { timeout = 300000, token } = {}) {
     } catch (error) {
       return reject(error);
     }
-    const child = cp.execFile(config('python'), [cli, ...args], { maxBuffer: 64 * 1024 * 1024, timeout },
+    if (!python) return reject(new Error('Python 3 was not found.'));
+    const child = cp.execFile(python.command, [...python.args, cli, ...args], { maxBuffer: 64 * 1024 * 1024, timeout },
       (error, stdout, stderr) => (error ? reject(new Error((stderr || error.message).trim())) : resolve(stdout)));
     // On Windows kill() ends only the CLI, without running its cleanup, so the reviewer it started would live on.
     if (token) token.onCancellationRequested(() => (process.platform === 'win32'

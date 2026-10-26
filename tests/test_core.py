@@ -737,7 +737,7 @@ class ReviewTest(unittest.TestCase):
         self.assertNotIn('f04.txt', notes)
         # External diff programs configured in git are never run.
         marker = Path(self.tmp.name) / 'ext-ran'
-        subprocess.run(['git', 'config', 'diff.external', f'sh -c "touch {marker}"'], cwd=fresh, check=True)
+        subprocess.run(['git', 'config', 'diff.external', f'sh -c "touch {marker.as_posix()}"'], cwd=fresh, check=True)
         review.collect_diff(fresh)
         self.assertFalse(marker.exists())
         with self.assertRaises(review.ReviewError):
@@ -841,7 +841,7 @@ class ReviewTest(unittest.TestCase):
         # Git filters from .gitattributes (external programs) never run while collecting.
         marker = Path(self.tmp.name) / 'filter-ran'
         config = Path(self.tmp.name) / 'gitconfig'
-        config.write_text(f'[filter "evil"]\n\tclean = "touch {marker}; cat"\n')
+        config.write_text(f'[filter "evil"]\n\tclean = "touch {marker.as_posix()}; cat"\n')
         (plain / '.gitattributes').write_text('*.md filter=evil\n')
         (plain / 'notes.md').write_text('third draft\n')
         with mock.patch.dict(os.environ, {'GIT_CONFIG_GLOBAL': str(config)}):
@@ -882,7 +882,7 @@ class ReviewTest(unittest.TestCase):
         # Snapshots never run git filters (external programs) from the project's .gitattributes.
         marker = Path(self.tmp.name) / 'filter-ran'
         config = Path(self.tmp.name) / 'gitconfig'
-        config.write_text(f'[filter "evil"]\n\tclean = "touch {marker}; cat"\n')
+        config.write_text(f'[filter "evil"]\n\tclean = "touch {marker.as_posix()}; cat"\n')
         filtered = Path(self.tmp.name) / 'filtered-nogit'
         filtered.mkdir()
         (filtered / '.gitattributes').write_text('* filter=evil\n')
@@ -995,6 +995,10 @@ class LicenseTest(unittest.TestCase):
         import shlex
         from baton.project import baton_command
         plain = '/Users/me/.ai-baton/bin/baton'
+        if WINDOWS:  # Quoted with forward slashes: the same in cmd and Git Bash. Paths cannot contain " there.
+            with mock.patch.dict(os.environ, {'BATON_LAUNCHER': 'C:\\Users\\me\\.ai-baton\\bin\\baton'}):
+                self.assertEqual(baton_command(), f'"{Path(sys.executable).as_posix()}" "C:/Users/me/.ai-baton/bin/baton"')
+            return
         with mock.patch.dict(os.environ, {'BATON_LAUNCHER': plain}):
             self.assertTrue(baton_command().endswith(f'"{plain}"'))  # Today's form, so hooks stay unchanged.
         odd = '/tmp/a $(touch x) `b` "c"/baton'
@@ -1011,7 +1015,7 @@ class LicenseTest(unittest.TestCase):
 
 
 class CliInstallTest(unittest.TestCase):
-    """vscode-extension/cli-install.js: versions side by side, `current` switched by rename, a stable launcher."""
+    """vscode-extension/cli-install.js: versions side by side, current-version switched by rename, a stable launcher."""
 
     def run_node(self, script):
         if not shutil.which('node'):
@@ -1033,27 +1037,35 @@ class CliInstallTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         bundled, target = Path(tmp.name) / 'cli', Path(tmp.name) / 'home' / '.ai-baton'
+        current = lambda: (target / 'current-version').read_text().strip()
         call = f'console.log(JSON.stringify(installCli({json.dumps(str(bundled))}, {json.dumps(str(target))})))'
         self.bundle(bundled, '0.3.0')
         self.assertEqual(json.loads(self.run_node(call)), {'home': str(target), 'updated': True})
-        self.assertEqual(os.readlink(target / 'current'), 'versions/0.3.0')
-        self.assertTrue(os.access(target / 'bin' / 'baton', os.X_OK))
+        self.assertEqual(current(), '0.3.0')
+        if not WINDOWS:
+            self.assertTrue(os.access(target / 'bin' / 'baton', os.X_OK))
         self.assertFalse(json.loads(self.run_node(call))['updated'])  # Same version: nothing to do.
         # The launcher runs the current version and hooks installed through it point at the launcher itself.
-        env = {**os.environ, 'HOME': str(Path(tmp.name) / 'home')}
+        home = Path(tmp.name) / 'home'
+        env = {**os.environ, 'HOME': str(home), 'USERPROFILE': str(home)}
         run = subprocess.run([sys.executable, str(target / 'bin' / 'baton'), 'install-hooks', '--agents=claude'],
                              capture_output=True, text=True, env=env)
         self.assertEqual(run.returncode, 0, run.stderr)
-        command = json.loads((Path(tmp.name) / 'home' / '.claude' / 'settings.json').read_text())['hooks']['Stop'][0]['hooks'][0]['command']
-        self.assertIn(f'"{target / "bin" / "baton"}" hook claude --global', command)
-        # An update switches `current` and keeps the previous version for hooks still running it.
+        hook = json.loads((home / '.claude' / 'settings.json').read_text())['hooks']['Stop'][0]['hooks'][0]
+        command = init_project.hook_text(hook)
+        self.assertIn(f'{(target / "bin" / "baton").as_posix()}', command.replace('\\', '/'))
+        self.assertTrue(command.endswith(' hook claude --global'), command)
+        self.assertTrue(init_project.is_baton_hook(command, 'claude'))
+        # An update switches current-version and keeps the previous version for hooks still running it.
         self.bundle(bundled, '0.3.1')
         launcher = (target / 'bin' / 'baton').read_text()
         self.assertTrue(json.loads(self.run_node(call))['updated'])
-        self.assertEqual(os.readlink(target / 'current'), 'versions/0.3.1')
+        self.assertEqual(current(), '0.3.1')
         self.assertEqual(sorted(os.listdir(target / 'versions')), ['0.3.0', '0.3.1'])
         self.assertEqual((target / 'bin' / 'baton').read_text(), launcher)  # Hook command unchanged.
-        self.assertIn('os.path.realpath', (target / 'bin' / 'baton').read_text())  # One version per process.
+        status = subprocess.run([sys.executable, str(target / 'bin' / 'baton'), 'status', str(tmp.name)],
+                                capture_output=True, text=True, env=env)
+        self.assertEqual(status.returncode, 0, status.stderr)
         # A lock whose owner is gone is taken over; a live owner's lock is respected.
         self.bundle(bundled, '0.3.2')
         (target / '.install.lock').write_text('999999:0:dead')
@@ -1064,13 +1076,33 @@ class CliInstallTest(unittest.TestCase):
         self.bundle(bundled, '0.3.2')
         (target / '.install.lock').write_text(f'{os.getpid()}:0:alive')
         self.assertEqual(json.loads(self.run_node(call)).get('busy'), True)
-        self.assertEqual(os.readlink(target / 'current'), 'versions/0.3.1')
+        self.assertEqual(current(), '0.3.1')
         self.assertEqual((target / '.install.lock').read_text(), f'{os.getpid()}:0:alive')  # Not someone else's to remove.
         (target / '.install.lock').unlink()
         self.run_node(call)
         self.assertEqual(sorted(os.listdir(target / 'versions')), ['0.3.1', '0.3.2'])  # Older ones are dropped.
         # No bundle (a development copy of the extension): nothing to install.
         self.assertEqual(self.run_node(f'console.log(JSON.stringify(installCli("/nonexistent", {json.dumps(str(target))})))'), 'null')
+
+    @unittest.skipIf(WINDOWS, 'installs from before current-version used a symlink, which Windows did not support anyway')
+    def test_upgrades_a_symlink_install(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        bundled, target = Path(tmp.name) / 'cli', Path(tmp.name) / '.ai-baton'
+        self.bundle(bundled, '0.3.0')
+        shutil.copytree(bundled, target / 'versions' / '0.3.0')
+        os.symlink('versions/0.3.0', target / 'current')
+        self.bundle(bundled, '0.4.0')
+        self.run_node(f'installCli({json.dumps(str(bundled))}, {json.dumps(str(target))})')
+        self.assertEqual((target / 'current-version').read_text().strip(), '0.4.0')
+        self.assertFalse(os.path.lexists(target / 'current'))
+        self.assertEqual(sorted(os.listdir(target / 'versions')), ['0.3.0', '0.4.0'])  # The old one may still run.
+        # The new launcher still works with only the old symlink (current-version not written yet).
+        (target / 'current-version').unlink()
+        os.symlink('versions/0.3.0', target / 'current')
+        run = subprocess.run([sys.executable, str(target / 'bin' / 'baton'), 'status', str(tmp.name)],
+                             capture_output=True, text=True)
+        self.assertEqual(run.returncode, 0, run.stderr)
 
 
 class WebviewTest(unittest.TestCase):
