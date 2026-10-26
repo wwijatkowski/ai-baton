@@ -205,11 +205,14 @@ def summarize(days=30, project=None):
     start = (today - timedelta(days=days - 1)).isoformat()
     week = (today - timedelta(days=6)).isoformat()
     project = str(Path(project).resolve()) if project else None
+    # Agents log the folder as they saw it: on Windows the drive letter's case and the slashes can differ.
+    same = lambda path: os.path.normcase(os.path.normpath(path)) if path else ''
+    inside = same(project)
     roots, report = {}, {}
     for agent, day, cwd, model, *values in iter_rows(cache):
         if day < start:
             continue
-        if project and cwd != project and not cwd.startswith(project + os.sep):
+        if project and same(cwd) != inside and not same(cwd).startswith(inside.rstrip(os.sep) + os.sep):
             continue
         data = report.setdefault(agent, {'today': empty(), 'week': empty(), 'period': empty(),
                                          'by_day': {}, 'by_project': {}, 'by_model': {}})

@@ -1114,6 +1114,13 @@ class WebviewTest(unittest.TestCase):
         result = subprocess.run(['node', str(ROOT / 'tests' / 'webview_smoke.js')], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_extension_flows(self):
+        # extension.js against a fake VS Code API and CLI: review, initialize, agents, Python lookup, cancelling.
+        if not shutil.which('node'):
+            self.skipTest('node is not installed')
+        result = subprocess.run(['node', str(ROOT / 'tests' / 'extension_flows.js')], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()
