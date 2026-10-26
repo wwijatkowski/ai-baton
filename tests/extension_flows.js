@@ -153,7 +153,7 @@ class Harness {
         withProgress: async (options, task) => {
           const listeners = [];
           h.cancelProgress = () => listeners.forEach((fn) => fn());
-          return task({ report() {} }, { onCancellationRequested: (fn) => listeners.push(fn) });
+          return task({ report() {} }, { onCancellationRequested: (fn) => { listeners.push(fn); return { dispose() {} }; } });
         },
         setStatusBarMessage: () => ({ dispose() {} }),
         showTextDocument: async (doc) => { h.shown = doc; },
@@ -433,6 +433,23 @@ for (const platform of ['linux', 'win32']) {
     assert.strictEqual(h.documents.length, 0);
   });
 }
+
+test('a CLI call that runs too long is stopped and reported (tree kill on Windows)', async (h) => {
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  h.pythons = { python: '3.11' };
+  h.cli.models = () => Harness.HANG;  // A hung CLI: refreshModels waits on it.
+  const realSetTimeout = global.setTimeout;
+  global.setTimeout = (fn, ms, ...rest) => realSetTimeout(fn, ms >= 300000 ? 0 : ms, ...rest);  // CLI time limit now.
+  try {
+    await h.start();
+    await new Promise((resolve) => realSetTimeout(resolve, 50));  // Let the shortened timers fire.
+    await h.settle();
+  } finally {
+    global.setTimeout = realSetTimeout;
+  }
+  assert.strictEqual(h.hung.length, 0);
+  assert.ok(h.execCalls.some((c) => c[0] === 'taskkill' && c.includes('/T')));
+});
 
 test('Ask for review needs an initialized project and an installed reviewer', async (h) => {
   h.installed = new Set();

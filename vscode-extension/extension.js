@@ -129,6 +129,13 @@ function workspaceRoot() {
   return folder && folder.uri.fsPath;
 }
 
+// Ends the CLI. On Windows kill() ends only the CLI, without running its cleanup, so a reviewer it started would live
+// on: taskkill ends the whole tree.
+function stopCli(child) {
+  if (process.platform === 'win32') cp.execFile('taskkill', ['/T', '/F', '/PID', String(child.pid)], () => {});
+  else child.kill();
+}
+
 function baton(args, { timeout = 300000, token } = {}) {
   return new Promise((resolve, reject) => {
     let cli;
@@ -138,11 +145,21 @@ function baton(args, { timeout = 300000, token } = {}) {
       return reject(error);
     }
     if (!python) return reject(new Error('Python 3 was not found.'));
-    const child = cp.execFile(python.command, [...python.args, cli, ...args], { maxBuffer: 64 * 1024 * 1024, timeout },
-      (error, stdout, stderr) => (error ? reject(new Error((stderr || error.message).trim())) : resolve(stdout)));
-    // On Windows kill() ends only the CLI, without running its cleanup, so the reviewer it started would live on.
-    if (token) token.onCancellationRequested(() => (process.platform === 'win32'
-      ? cp.execFile('taskkill', ['/T', '/F', '/PID', String(child.pid)], () => {}) : child.kill()));
+    let timedOut = false;
+    const child = cp.execFile(python.command, [...python.args, cli, ...args], { maxBuffer: 64 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        clearTimeout(timer);
+        if (listener) listener.dispose();
+        if (timedOut) reject(new Error(`baton ${args[0]} took longer than ${Math.round(timeout / 1000)} s`));
+        else if (error) reject(new Error((stderr || error.message).trim()));
+        else resolve(stdout);
+      });
+    // Our own timer, not execFile's: that one would end only the CLI on Windows.
+    const timer = setTimeout(() => {
+      timedOut = true;
+      stopCli(child);
+    }, timeout);
+    const listener = token && token.onCancellationRequested(() => stopCli(child));
   });
 }
 

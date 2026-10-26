@@ -45,6 +45,25 @@ exports.run = async function run() {
   const out = cp.execFileSync(python, [path.join(home, 'bin', 'baton'), 'status', '--json', project], { encoding: 'utf8' });
   assert.strictEqual(JSON.parse(out).name, path.basename(project));
 
+  // Install the hooks through the installed launcher, then run exactly the commands written to the agents' settings
+  // (Claude: exec form on Windows; Codex: a command line for the system's shell), as the agents would.
+  cp.execFileSync(python, [path.join(home, 'bin', 'baton'), 'install-hooks', '--agents=claude,codex'], { encoding: 'utf8' });
+  const stopHook = (file) => JSON.parse(fs.readFileSync(path.join(os.homedir(), file), 'utf8')).hooks.Stop[0].hooks[0];
+  for (const [agent, file] of [['claude', '.claude/settings.json'], ['codex', '.codex/hooks.json']]) {
+    const hook = stopHook(file);
+    const input = JSON.stringify({ cwd: project, hook_event_name: 'Stop', session_id: `installed-${agent}`,
+      last_assistant_message: `Reply from ${agent} through the installed hook.` });
+    const output = hook.args ? cp.execFileSync(hook.command, hook.args, { input, encoding: 'utf8' })
+      : cp.execSync(hook.command, { input, encoding: 'utf8' });  // cmd.exe on Windows, /bin/sh elsewhere.
+    assert.doesNotThrow(() => JSON.parse(output), `${agent}'s hook printed JSON: ${output}`);
+  }
+  await vscode.commands.executeCommand('aiBaton.refresh');
+  for (const agent of ['claude', 'codex']) {
+    const entry = await poll(() => (api.state().status.agents || []).find((a) => a.id === agent && a.checkpoint &&
+      /through the installed hook/.test(a.checkpoint.summary)), 30000, () => JSON.stringify(api.state().status.agents));
+    assert.ok(entry, `${agent}'s checkpoint from the installed hook reaches the panel`);
+  }
+
   const commands = await vscode.commands.getCommands(true);
   for (const id of ['aiBaton.askForReview', 'aiBaton.initProject', 'aiBaton.switchAgent', 'aiBaton.showRecent']) {
     assert.ok(commands.includes(id), `${id} is registered`);

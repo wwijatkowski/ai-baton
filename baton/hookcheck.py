@@ -5,6 +5,7 @@ changes. Its app-server reports that per hook (`hooks/list` -> trustStatus), so 
 Not a hook itself: this may take a moment and is only called by the panel and the CLI.
 """
 import json
+import os
 import queue
 import subprocess
 import threading
@@ -13,7 +14,7 @@ from pathlib import Path
 
 from . import init_project
 from .init_project import HOOK_FILES, has_baton_hooks, is_baton_hook
-from .project import agent_binary, find_root, load_agents, read_json, write_json
+from .project import agent_binary, find_root, kill_tree, load_agents, read_json, write_json
 
 CACHE = Path.home() / '.cache' / 'ai-baton' / 'hook-trust-v2.json'  # Bump the name when the result format changes.
 CODEX_EVENTS = {'sessionStart', 'userPromptSubmit', 'stop'}
@@ -32,7 +33,8 @@ def codex_hooks(binary, cwd):
             lines.put(line)
         lines.put(None)  # End of output.
 
-    threading.Thread(target=read, daemon=True).start()
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
     try:
         def send(message):
             proc.stdin.write(json.dumps({'jsonrpc': '2.0', **message}) + '\n')
@@ -58,7 +60,22 @@ def codex_hooks(binary, cwd):
                 return [h for entry in message['result']['data'] for h in entry.get('hooks', [])]
         raise TimeoutError('Codex did not answer')
     finally:
-        proc.kill()
+        # The whole tree on Windows: an npm-installed codex.cmd would otherwise leave the app-server running.
+        try:
+            if os.name == 'nt':
+                kill_tree(proc)
+            else:
+                proc.kill()
+                proc.wait(5)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        try:
+            proc.stdin.close()
+        except OSError:
+            pass
+        # Not stdout: closing it would wait for the reader, which a child still holding the pipe keeps reading. The
+        # reader is a daemon and ends at EOF.
+        reader.join(1)
 
 
 def codex_trust(root):

@@ -24,7 +24,7 @@ from pathlib import Path
 
 from . import changes
 from .changes import BASELINE_REF, SHADOW_CONFIG, SHADOW_DIR
-from .project import MEMORY_DIR, agent_binary, find_root, load_agents, read_json, write_text
+from .project import MEMORY_DIR, agent_binary, find_root, kill_tree, load_agents, read_json, write_text
 from .recall import entries
 
 MAX_DIFF = 200_000
@@ -297,8 +297,7 @@ def stop(proc, group):
         proc.wait()
         return
     if os.name == 'nt':
-        subprocess.run(['taskkill', '/T', '/F', '/PID', str(proc.pid)], capture_output=True)
-        proc.wait()
+        kill_tree(proc)
         return
     for sig, grace in ((signal.SIGTERM, 3), (signal.SIGKILL, 3)):
         try:

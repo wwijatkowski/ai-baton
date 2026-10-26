@@ -23,7 +23,7 @@ async function main() {
   // Started from a VS Code terminal, Electron would otherwise run as plain Node.
   delete process.env.ELECTRON_RUN_AS_NODE;
   const baton = (args, input) => cp.execFileSync(PYTHON, [path.join(ROOT, 'bin', 'baton'), ...args], { env, input, encoding: 'utf8' });
-  baton(['init', project]);
+  baton(['init', project, '--agents=']);  // No project hooks: the user-level ones the suite installs must do the work.
   // A finished Claude turn, as its Stop hook reports it: the panel must show this checkpoint.
   baton(['hook', 'claude'], JSON.stringify({
     cwd: project, hook_event_name: 'Stop', session_id: 'vscode-test', last_assistant_message: 'Set up the démo for the test.',
@@ -34,7 +34,9 @@ async function main() {
       extensionTestsPath: path.join(__dirname, 'suite.js'),
       extensionTestsEnv: { HOME: home, USERPROFILE: home, BATON_TEST_PROJECT: project },
       launchArgs: [project, '--disable-extensions', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes',
-        '--user-data-dir', path.join(scratch, 'user-data'), '--extensions-dir', path.join(scratch, 'extensions')],
+        '--user-data-dir', path.join(scratch, 'user-data'), '--extensions-dir', path.join(scratch, 'extensions'),
+        // macOS: never touch the keychain ("Keychain Not Found" would wait for a click forever in CI).
+        ...(process.platform === 'darwin' ? ['--use-mock-keychain'] : [])],
     });
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 5 });

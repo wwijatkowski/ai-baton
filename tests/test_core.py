@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from baton import changes, hook, init_project, models, project, recall, review, status  # noqa: E402
+from baton import changes, hook, hookcheck, init_project, models, project, recall, review, status  # noqa: E402
 from baton.project import read_json  # noqa: E402
 
 # Tests never read the real per-user registry (a hidden agent there would change what init does).
@@ -990,6 +990,42 @@ class ReviewTest(unittest.TestCase):
 
 
 
+class HookTrustTest(unittest.TestCase):
+    """hookcheck.codex_hooks talks JSON-RPC to a short-lived `codex app-server` (stand-ins here)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+
+    def test_reads_the_answer_split_across_writes(self):
+        server = fake_tool(self.dir, 'codex', 'import json\n'
+                           'for line in sys.stdin:\n'
+                           '    msg = json.loads(line)\n'
+                           '    if msg.get("id") == 2:\n'
+                           '        out = json.dumps({"id": 2, "result": {"data": [{"hooks": [{"eventName": "stop", "command": "x"}]}]}})\n'
+                           '        sys.stdout.write("\\n" + out[:10]); sys.stdout.flush()\n'
+                           '        sys.stdout.write(out[10:] + "\\n"); sys.stdout.flush()\n')
+        self.assertEqual(hookcheck.codex_hooks(str(server), self.dir), [{'eventName': 'stop', 'command': 'x'}])
+
+    def test_a_silent_server_and_its_child_are_stopped(self):
+        # On Windows the stand-in is a .cmd wrapper, as npm installs Codex: the app-server behind it must go too.
+        server = fake_tool(self.dir, 'codex', 'import os, subprocess, time\n'
+                           'child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])\n'
+                           f'open({str(self.dir / "pids")!r}, "w").write(f"{{os.getpid()}} {{child.pid}}")\n'
+                           'time.sleep(30)\n')
+        with mock.patch.object(hookcheck, 'TIMEOUT', 2):
+            started = time.time()
+            with self.assertRaises(TimeoutError):
+                hookcheck.codex_hooks(str(server), self.dir)
+        self.assertLess(time.time() - started, 15)
+        time.sleep(0.5)
+        server_pid, child_pid = map(int, (self.dir / 'pids').read_text().split())
+        self.assertFalse(alive(server_pid))
+        if WINDOWS:  # On Unix the child is only re-parented; a killed real app-server takes its own children along.
+            self.assertFalse(alive(child_pid))
+
+
 class LicenseTest(unittest.TestCase):
     def test_hook_command_quotes_odd_paths(self):
         import shlex
@@ -1061,6 +1097,8 @@ class CliInstallTest(unittest.TestCase):
         launcher = (target / 'bin' / 'baton').read_text()
         self.assertTrue(json.loads(self.run_node(call))['updated'])
         self.assertEqual(current(), '0.3.1')
+        if not WINDOWS:
+            self.assertEqual(os.readlink(target / 'current'), 'versions/0.3.1')
         self.assertEqual(sorted(os.listdir(target / 'versions')), ['0.3.0', '0.3.1'])
         self.assertEqual((target / 'bin' / 'baton').read_text(), launcher)  # Hook command unchanged.
         status = subprocess.run([sys.executable, str(target / 'bin' / 'baton'), 'status', str(tmp.name)],
@@ -1095,11 +1133,10 @@ class CliInstallTest(unittest.TestCase):
         self.bundle(bundled, '0.4.0')
         self.run_node(f'installCli({json.dumps(str(bundled))}, {json.dumps(str(target))})')
         self.assertEqual((target / 'current-version').read_text().strip(), '0.4.0')
-        self.assertFalse(os.path.lexists(target / 'current'))
+        self.assertEqual(os.readlink(target / 'current'), 'versions/0.4.0')  # Still there for older launchers.
         self.assertEqual(sorted(os.listdir(target / 'versions')), ['0.3.0', '0.4.0'])  # The old one may still run.
         # The new launcher still works with only the old symlink (current-version not written yet).
         (target / 'current-version').unlink()
-        os.symlink('versions/0.3.0', target / 'current')
         run = subprocess.run([sys.executable, str(target / 'bin' / 'baton'), 'status', str(tmp.name)],
                              capture_output=True, text=True)
         self.assertEqual(run.returncode, 0, run.stderr)

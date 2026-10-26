@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -216,8 +217,22 @@ def read_json(path, default=None):
         return default
 
 
+def kill_tree(proc, timeout=5):
+    """End a Windows process and everything it started (a .cmd wrapper's child too), bounded by `timeout` seconds,
+    then reap it. Falls back to killing only `proc` when taskkill fails or hangs."""
+    try:
+        subprocess.run(['taskkill', '/T', '/F', '/PID', str(proc.pid)], capture_output=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        proc.wait(timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout)
+
+
 @contextmanager
-def file_lock(path, timeout=5):
+def file_lock(path, timeout=3):
     """Hold an exclusive lock on `path` (created if missing) across processes. Gives up with TimeoutError after
     `timeout` seconds, so a stuck writer cannot hold a hook past its time limit."""
     with open(path, 'a+b') as stream:

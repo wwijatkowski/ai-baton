@@ -2,7 +2,8 @@
 // Hooks in the agents' settings run ~/.ai-baton/bin/baton, a tiny launcher that never changes, so the hook command
 // stays identical across updates (Codex asks for trust again whenever it changes). Each version lives in
 // versions/<version>; the current-version file names one and is replaced with a rename, so a hook running during an update sees
-// either the old or the new CLI, never a half-copied one. A file, not a symlink: Windows needs extra rights for those.
+// either the old or the new CLI, never a half-copied one. A file, not a symlink: Windows needs extra rights for those
+// (macOS and Linux also keep the `current` symlink of earlier versions).
 // A lock keeps two VS Code windows from installing at once.
 // No VS Code dependency, so tests can run it with plain Node.
 const fs = require('fs');
@@ -135,11 +136,13 @@ function installCli(bundled, target) {
     }
     writeAtomic(launcher, LAUNCHER, 0o755);
     writeAtomic(path.join(target, CURRENT_FILE), `${version}\n`, 0o644);
-    // The symlink older versions used: nothing reads it once current-version exists.
-    try {
-      if (fs.lstatSync(path.join(target, 'current')).isSymbolicLink()) fs.unlinkSync(path.join(target, 'current'));
-    } catch {
-      // Not there.
+    if (process.platform !== 'win32') {
+      // The `current` symlink older launchers read: kept up to date, so a hook that started one just before this
+      // update, or an older extension in another window, still finds a complete version.
+      const link = `${path.join(target, 'current')}.tmp-${process.pid}`;
+      fs.rmSync(link, { force: true });
+      fs.symlinkSync(path.join('versions', version), link);
+      fs.renameSync(link, path.join(target, 'current'));
     }
     // Keep the new version and the one before it (a hook may still be running it); drop older ones. Best effort: the
     // new version is already in use, and a folder Windows keeps busy now goes at the next update.
