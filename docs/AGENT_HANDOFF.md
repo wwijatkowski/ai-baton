@@ -45,7 +45,7 @@ Releasing: secrets VSCE_PAT and OVSX_PAT are set. Bump the version and add a CHA
    - Secrets `AZURE_CLIENT_ID` and `AZURE_TENANT_ID`.
    - The identity's Azure DevOps id `871d2ee6-b125-6f1a-b920-3940cbfd884f` is added by the user as Contributor of publisher wwijatkowski.
    - `release.yml` signs in with `azure/login@v2` and publishes with `--azure-credential`, falling back to VSCE_PAT with a warning.
-   After the first release without the warning (or once verified by the identity check), remove the fallback step; the user deletes VSCE_PAT and the Azure DevOps token.
+   Verified 2026-10-26 from a temporary workflow: the identity signs in and `vsce verify-pat wwijatkowski --azure-credential` succeeds (a role check; a skipped duplicate publish proves nothing, vsce only reads the version list). After the first release without the fallback warning, remove the fallback step; the user deletes VSCE_PAT and the Azure DevOps token.
 3. Optional: a manual look at the VS Code panel on Windows. CI covers the CLIs, hooks and the extension host, not the rendered webview.
 4. Publisher display name (waiting for VSMarketplace@microsoft.com). Optional: announcement post.
 
