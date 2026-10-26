@@ -120,11 +120,18 @@ def diagnose_codex(home, project, env):
     trace = home / 'trace'
     trace.mkdir(exist_ok=True)
     out, err, envdump = (str(trace / n).replace('\\', '/') for n in ('out.txt', 'err.txt', 'env.txt'))
-    dump = f'set > "{envdump}"' if os.name == 'nt' else f'env > "{envdump}"'
+    # A script, so the command line Codex quotes stays simple: dump the environment, then run our hook with its
+    # output in files.
+    if os.name == 'nt':
+        script = trace / 'trace.cmd'
+        script.write_text(f'@set > "{envdump}"\r\n@{hook["command"]} > "{out}" 2> "{err}"\r\n', encoding='utf-8')
+    else:
+        script = trace / 'trace.sh'
+        script.write_text(f'env > "{envdump}"\n{hook["command"]} > "{out}" 2> "{err}"\n', encoding='utf-8')
+        script.chmod(0o755)
     config = json.loads((home / '.codex' / 'hooks.json').read_text(encoding='utf-8'))
-    config['hooks']['SessionStart'] = [{'hooks': [{'type': 'command', 'command': dump, 'timeout': 10}]},
-                                       {'hooks': [{'type': 'command', 'timeout': 10,
-                                                   'command': f'{hook["command"]} > "{out}" 2> "{err}"'}]}]
+    config['hooks']['SessionStart'] = [{'hooks': [{'type': 'command', 'timeout': 10,
+                                                   'command': f'"{script.as_posix()}"'}]}]
     (home / '.codex' / 'hooks.json').write_text(json.dumps(config), encoding='utf-8')
     from baton import hookcheck
     approve(home, hookcheck.codex_hooks(shutil.which('codex'), project))
