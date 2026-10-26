@@ -35,21 +35,15 @@ AI Baton 0.4.0 (preview) is PUBLISHED on the VS Code Marketplace and Open VSX (`
 - Two Codex reviews of the plan and the diff; accepted points applied (see DECISIONS).
 
 ## Next steps (in this order)
-Releasing: secrets VSCE_PAT and OVSX_PAT are set. Bump the version and add a CHANGELOG section in a PR, merge, then `git tag vX.Y.Z && git push origin vX.Y.Z`. `release.yml` then tests, publishes to both stores and creates the GitHub release; the stores show the new version about 5 minutes later.
-1. Now that Open VSX has the extension:
-   - Done 2026-10-26: the Reader member added to the Marketplace publisher for the namespace claim is removed.
-   - Open VSX trusted publishing: registered 2026-10-26 (owner `wwijatkowski`, repo `ai-baton`, workflow `release.yml`, environment `release`); `release.yml` publishes with `--trusted-publishing` and falls back to OVSX_PAT with a warning. After the next release: if the publish job shows no fallback warning, remove the fallback step, then the user deletes the OVSX_PAT secret and the token on open-vsx.org.
-2. Marketplace without a PAT (global PATs stop working on 2026-12-01). Set up 2026-10-26:
-   - Managed identity `ai-baton-release` in resource group `ai-baton-release` (West Europe, user's subscription).
-   - Federated credential subject `repo:wwijatkowski@37709252/ai-baton@1434103333:environment:release`. GitHub now sends owner and repo with their numeric ids; the plain `repo:wwijatkowski/ai-baton:...` form did not match.
-   - Secrets `AZURE_CLIENT_ID` and `AZURE_TENANT_ID`.
-   - The identity's Azure DevOps id `871d2ee6-b125-6f1a-b920-3940cbfd884f` is added by the user as Contributor of publisher wwijatkowski.
-   - `release.yml` signs in with `azure/login@v2` and publishes with `--azure-credential`, falling back to VSCE_PAT with a warning.
-   Verified 2026-10-26 from a temporary workflow: the identity signs in and `vsce verify-pat wwijatkowski --azure-credential` succeeds (a role check; a skipped duplicate publish proves nothing, vsce only reads the version list). After the first release without the fallback warning, remove the fallback step; the user deletes VSCE_PAT and the Azure DevOps token.
-3. Optional: a manual look at the VS Code panel on Windows. CI covers the CLIs, hooks and the extension host, not the rendered webview.
-4. Publisher display name (waiting for VSMarketplace@microsoft.com). The user does not want promotional posts for now.
-5. Listing (0.4.1): display name "AI Baton: Claude Code & Codex memory, handoff, review" for Marketplace search (it weighs the name most; the id stays, so it can go back to "AI Baton" any time), wider keywords, Cursor/Windsurf via Open VSX in the description. The README starts with `media/screenshots/demo.gif` (33 s, 1.6 MB): recorded by Claude desktop with `screencapture -v` in a throwaway project, cut and sped up with ffmpeg; the raw video is `~/Movies/ai-baton-demo.mov`.
-6. Next session (user's plan): the MCP server for agents without hooks (STATUS To do 2).
+Releasing (no stored tokens, see 1): bump the version and add a CHANGELOG section in a PR, merge, then `git tag vX.Y.Z && git push origin vX.Y.Z`. `release.yml` then tests, publishes to both stores and creates the GitHub release; the stores show the new version about 5 minutes later.
+1. Done 2026-10-26: releases need no stored tokens. 0.4.1 was the first release published this way: the Marketplace as the managed identity, Open VSX through trusted publishing. Neither fallback ran, so the fallbacks were removed. Setup:
+   - Marketplace: managed identity `ai-baton-release` (resource group `ai-baton-release`, West Europe). Its federated credential subject is `repo:wwijatkowski@37709252/ai-baton@1434103333:environment:release` (GitHub's numeric-id format). Secrets `AZURE_CLIENT_ID`/`AZURE_TENANT_ID`. Azure DevOps id `871d2ee6-b125-6f1a-b920-3940cbfd884f` is a Contributor of publisher wwijatkowski. Check rights with `vsce verify-pat wwijatkowski --azure-credential`; a skipped duplicate publish proves nothing.
+   - Open VSX: trusted publisher registered for `release.yml`, environment `release`.
+   - The Reader member on the Marketplace publisher was removed. The user deletes the VSCE_PAT/OVSX_PAT secrets and revokes both tokens.
+2. Optional: a manual look at the VS Code panel on Windows. CI covers the CLIs, hooks and the extension host, not the rendered webview.
+3. Publisher display name (waiting for VSMarketplace@microsoft.com). The user does not want promotional posts for now.
+4. Listing (0.4.1, released): display name "AI Baton: Claude Code & Codex memory, handoff, review" for Marketplace search (it weighs the name most; the id stays, so it can go back to "AI Baton" any time), wider keywords, Cursor/Windsurf via Open VSX in the description. The README starts with `media/screenshots/demo.gif` (33 s, 1.6 MB): recorded by Claude desktop with `screencapture -v` in a throwaway project, cut and sped up with ffmpeg; the raw video is `~/Movies/ai-baton-demo.mov`.
+5. Next session (user's plan): the MCP server for agents without hooks (STATUS To do 2).
 
 ## How we work (user's preferences)
 - Reply in Polish; docs in English. Ask before outward or destructive actions (pushes to other repos, history rewrites, deleting memory).

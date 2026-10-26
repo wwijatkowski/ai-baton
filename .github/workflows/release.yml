@@ -2,13 +2,11 @@ name: Release
 
 # Push a tag like v0.4.0 (it must match vscode-extension/package.json) to run every test, then package the extension
 # and publish it to the VS Code Marketplace and Open VSX, with the .vsix attached to a GitHub release.
-# Marketplace: the managed identity `ai-baton-release` (Azure resource group of the same name), signed in through
-# GitHub OIDC (secrets AZURE_CLIENT_ID, AZURE_TENANT_ID; federated credential for the `release` environment), a
-# Contributor of publisher wwijatkowski. VSCE_PAT (a global Azure DevOps token) is the fallback; it stops working on
-# 2026-12-01, when Azure DevOps retires global tokens.
-# Open VSX: trusted publishing (OIDC, registered at open-vsx.org for this workflow and the `release` environment), with
-# the OVSX_PAT secret as a fallback until it has worked once. Re-running after a partial failure is safe: versions
-# already published are skipped.
+# No stored tokens; both stores trust this workflow's GitHub OIDC token in the `release` environment:
+# - Marketplace: the managed identity `ai-baton-release` (Azure resource group of the same name; secrets
+#   AZURE_CLIENT_ID and AZURE_TENANT_ID), a Contributor of publisher wwijatkowski.
+# - Open VSX: trusted publishing, registered at open-vsx.org for this workflow and environment.
+# Re-running after a partial failure is safe: versions already published are skipped.
 on:
   push:
     tags: ['v*']
@@ -46,36 +44,15 @@ jobs:
       - name: Package
         run: sh scripts/package.sh
       - name: Sign in as the publishing identity
-        id: azure
-        continue-on-error: true
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
-      - name: Publish to the VS Code Marketplace (managed identity)
-        id: marketplace
-        if: steps.azure.outcome == 'success'
-        continue-on-error: true
+      - name: Publish to the VS Code Marketplace
         run: npx --yes @vscode/vsce@4.0.0 publish --packagePath "ai-baton-$VERSION.vsix" --skip-duplicate --azure-credential
-      - name: Publish to the VS Code Marketplace (token, fallback until 2026-12-01)
-        if: steps.azure.outcome != 'success' || steps.marketplace.outcome != 'success'
-        run: |
-          echo "::warning::Marketplace publishing as the managed identity failed; used VSCE_PAT, which stops working on 2026-12-01."
-          npx --yes @vscode/vsce@4.0.0 publish --packagePath "ai-baton-$VERSION.vsix" --skip-duplicate
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-      - name: Publish to Open VSX (trusted publishing)
-        id: ovsx
-        continue-on-error: true
+      - name: Publish to Open VSX
         run: npx --yes ovsx@1.2.0 publish "ai-baton-$VERSION.vsix" --skip-duplicate --trusted-publishing
-      - name: Publish to Open VSX (token, fallback)
-        if: steps.ovsx.outcome == 'failure'
-        run: |
-          echo "::warning::Open VSX trusted publishing failed; published with OVSX_PAT instead. Check the registration at open-vsx.org."
-          npx --yes ovsx@1.2.0 publish "ai-baton-$VERSION.vsix" --skip-duplicate
-        env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
       - name: GitHub release
         run: |
           # This version's section of the changelog as the release notes.
