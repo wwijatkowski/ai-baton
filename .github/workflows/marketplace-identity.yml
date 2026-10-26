@@ -1,0 +1,31 @@
+name: Marketplace identity check
+
+# Temporary: signs in as the publishing managed identity, prints the id the Marketplace knows it by (to add it to the
+# publisher's Members) and checks whether it can already manage publisher wwijatkowski. Deleted once that works.
+on:
+  push:
+    branches: [marketplace-identity]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Identity as Azure DevOps and the Marketplace see it
+        run: |
+          az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me \
+            --resource 499b84ac-1321-427f-aa17-267ca6975798 --query "{id: id, displayName: displayName}" -o json
+      - name: Access to publisher wwijatkowski
+        continue-on-error: true
+        run: |
+          az rest -u "https://marketplace.visualstudio.com/_apis/gallery/publishers/wwijatkowski?flags=1&api-version=7.1-preview.1" \
+            --resource 499b84ac-1321-427f-aa17-267ca6975798 --query "{publisher: publisherName, displayName: displayName}" -o json
