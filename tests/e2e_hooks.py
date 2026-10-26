@@ -75,6 +75,8 @@ def main():
     claude_at = checkpoint('claude', 'Claude wrote the démo plan.')
     agent([codex, 'exec', '--skip-git-repo-check', 'say hi'], 'codex')
     delivered = [s for s in seen('codex').values() if s.get('claude') == claude_at]
+    if not delivered:
+        diagnose_codex(home, project, env)
     check(delivered, f"Codex's hooks delivered Claude's checkpoint: {seen('codex')}")
     codex_at = checkpoint('codex', 'Codex reviewed the démo plan.')
     agent([claude, '-p', 'say hi'], 'claude')
@@ -89,6 +91,26 @@ def main():
               f"{name}'s UserPromptSubmit hook ran: {activity.get(name)}")
     shutil.rmtree(tmp, ignore_errors=True)
     print(f'Real agents ran AI Baton hooks on {sys.platform}: OK')
+
+
+def diagnose_codex(home, project, env):
+    """What went wrong: the hook command run the way Codex runs it, and what Codex recorded about its hooks."""
+    hook = json.loads((home / '.codex' / 'hooks.json').read_text(encoding='utf-8'))['hooks']['SessionStart'][0]['hooks'][0]
+    payload = json.dumps({'cwd': str(project), 'hook_event_name': 'SessionStart', 'session_id': 'diagnose'})
+    # Codex: `%COMSPEC% /C "<command>"` on Windows, `$SHELL -lc <command>` elsewhere.
+    command = f'cmd.exe /C "{hook["command"]}"' if os.name == 'nt' else ['/bin/sh', '-lc', hook['command']]
+    run = subprocess.run(command, cwd=project, env=env, input=payload, capture_output=True, text=True, encoding='utf-8',
+                         errors='replace')
+    print(f'hook command: {hook["command"]}\nrun as Codex does: exit {run.returncode}\n'
+          f'stdout: {run.stdout[:300]}\nstderr: {run.stderr[-1500:]}')
+    for rollout in (home / '.codex' / 'sessions').rglob('*.jsonl'):
+        for line in rollout.read_text(encoding='utf-8', errors='replace').splitlines():
+            if 'hook' in line.lower():
+                print('rollout:', line[:1500])
+    for log in (home / '.codex').rglob('*.log'):
+        for line in log.read_text(encoding='utf-8', errors='replace').splitlines():
+            if 'hook' in line.lower():
+                print('log:', line[:600])
 
 
 def check(ok, message):
