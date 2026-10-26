@@ -279,6 +279,13 @@ test('on Windows the py launcher or python is used when python3 is missing', asy
   assert.strictEqual(status[0], 'python');
 });
 
+test('on Windows Python 3.11 is the minimum (older ones cannot start in a hook)', async (h) => {
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  h.pythons = { 'py -3': '3.10' };
+  await h.start();
+  assert.match(h.lastState().error, /needs Python 3\.11 or newer; "python3" is 3\.10/);
+});
+
 // ---------- agents ----------
 
 test('New chat passes left-out arguments as undefined, never null', async (h) => {

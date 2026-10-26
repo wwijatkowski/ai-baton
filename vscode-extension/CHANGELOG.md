@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Windows support: the CLI, memory hooks (Claude in exec form, no shell needed) and the CLI installer work on Windows; Python is found through the `py` launcher or `python`.
+- Windows support (Python 3.11 or newer): the CLI, memory hooks and the CLI installer work on Windows; Python is found through the `py` launcher or `python`.
 - Two conversations of the same agent no longer overwrite each other's working state; a second chat is warned that the first one is still working.
 - Cancelling a review on Windows also stops the reviewing agent the CLI started.
 - Tests run on Linux, Windows and macOS for every change, including the extension in a real VS Code and the real Claude Code and Codex CLIs running the hooks.

@@ -41,7 +41,7 @@ Then start a new chat in either agent.
 ## Requirements
 
 - macOS, Linux or Windows (native Windows, not WSL).
-- Python 3.9 or newer: `python3` on macOS and Linux (on macOS: `xcode-select --install`); on Windows the `py` launcher or `python` from python.org. Or set `aiBaton.python`.
+- Python 3.9 or newer as `python3` on macOS and Linux (on macOS: `xcode-select --install`); on Windows Python 3.11 or newer from python.org (the `py` launcher or `python`). Or set `aiBaton.python`.
 - The Claude Code and/or Codex VS Code extension, signed in.
 - For **Ask for review**: a git repository or a project set up with AI Baton (without git, the changes come from AI Baton's local snapshots), and the reviewing agent's command-line tool works with your account. A review uses that agent's plan.
 - Other agents (Copilot, Cline, Continue, ...) can be added to the panel. They do not save checkpoints yet; when you open one, AI Baton copies a request to load the shared context, which you paste into its chat.

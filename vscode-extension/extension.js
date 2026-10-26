@@ -50,7 +50,8 @@ function config(key) {
 }
 
 const { installCli } = require('./cli-install');
-const MIN_PYTHON = [3, 9];
+// Windows needs 3.11: older versions cannot start in the empty environment Codex gives hooks there (no SYSTEMROOT).
+const MIN_PYTHON = process.platform === 'win32' ? [3, 11] : [3, 9];
 let cliHome;
 let python = null;  // { command, args }: how to run Python 3, found by checkPython.
 let ready = false;

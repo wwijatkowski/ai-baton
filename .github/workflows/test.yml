@@ -16,6 +16,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python: ['3.9', '3.13']
+        exclude:
+          - os: windows-latest  # Windows needs 3.11+ (3.9 cannot start in the empty environment Codex gives hooks).
+            python: '3.9'
+        include:
+          - os: windows-latest
+            python: '3.11'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
