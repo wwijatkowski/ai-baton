@@ -39,12 +39,13 @@ def main():
         return run.stdout
 
     def agent(command, name):
-        run = subprocess.run(command, cwd=project, env=env, capture_output=True, text=True, encoding='utf-8',
+        # Codex's debug log says why a hook failed (exit code, stderr, timeout).
+        run = subprocess.run(command, cwd=project, env={**env, 'RUST_LOG': 'debug'} if name == 'codex' else env, capture_output=True, text=True, encoding='utf-8',
                              errors='replace', stdin=subprocess.DEVNULL, timeout=300)
         print(f'{name} exited {run.returncode} (no login, expected): {(run.stdout + run.stderr).strip()[-160:]}')
-        for line in (run.stdout + run.stderr).splitlines():
-            if 'hook' in line.lower():
-                print(f'  {name}: {line[:400]}')
+        lines = [line for line in (run.stdout + run.stderr).splitlines() if 'hook' in line.lower()]
+        for line in lines[:60]:
+            print(f'  {name}: {line[-500:]}')
 
     def seen(by):
         """{session: {agent: saved_at}}: what `by`'s hooks delivered to each of its conversations."""
