@@ -1093,9 +1093,18 @@ class LicenseTest(unittest.TestCase):
         import shlex
         from baton.project import baton_command
         plain = '/Users/me/.ai-baton/bin/baton'
-        if WINDOWS:  # Quoted with forward slashes: the same in cmd and Git Bash. Paths cannot contain " there.
-            with mock.patch.dict(os.environ, {'BATON_LAUNCHER': 'C:\\Users\\me\\.ai-baton\\bin\\baton'}):
-                self.assertEqual(baton_command(), f'"{Path(sys.executable).as_posix()}" "C:/Users/me/.ai-baton/bin/baton"')
+        if WINDOWS:
+            # An unquoted interpreter (PowerShell, Codex's shell there, and cmd both run it) and a quoted script.
+            launcher = 'C:\\Users\\Jan Kowalski\\.ai-baton\\bin\\baton'
+            with mock.patch.dict(os.environ, {'BATON_LAUNCHER': launcher}):
+                command = baton_command()
+            self.assertEqual(command, f'{Path(sys.executable).as_posix()} "C:/Users/Jan Kowalski/.ai-baton/bin/baton"')
+            for shell in (['powershell', '-NoProfile', '-Command'], ['cmd.exe', '/d', '/c']):
+                run = subprocess.run([*shell, f'{Path(sys.executable).as_posix()} -c "print(41 + 1)"'],
+                                     capture_output=True, text=True)
+                self.assertEqual(run.stdout.strip(), '42', (shell, run.stderr))
+            with mock.patch.object(project, 'short_path', lambda p: 'C:/Program Files/Python/python.exe'):
+                self.assertTrue(baton_command().startswith('& "C:/Program Files/Python/python.exe" '))
             return
         with mock.patch.dict(os.environ, {'BATON_LAUNCHER': plain}):
             self.assertTrue(baton_command().endswith(f'"{plain}"'))  # Today's form, so hooks stay unchanged.

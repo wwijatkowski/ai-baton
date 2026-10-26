@@ -39,14 +39,33 @@ def baton_command():
     the full path of the running one, so hooks use the same Python the extension checked."""
     script = os.environ.get('BATON_LAUNCHER') or str(HOME / 'bin' / 'baton')
     if os.name == 'nt':
-        # Forward slashes in double quotes read the same in cmd and Git Bash (a backslash is an escape in bash).
-        return ' '.join(f'"{Path(p).as_posix()}"' for p in hook_argv()[:2])
+        # Codex runs hook commands in the session's shell, PowerShell on Windows (cmd.exe when none is found). A quoted
+        # program is only a string to PowerShell, so the interpreter goes unquoted (its short 8.3 name if the path has
+        # spaces), which both shells run; the script path is a quoted argument. Forward slashes: no escapes anywhere.
+        python, script = hook_argv()
+        python = Path(short_path(python)).as_posix()
+        if ' ' in python:  # Short names are turned off on this disk: PowerShell's call operator.
+            return f'& "{python}" "{Path(script).as_posix()}"'
+        return f'{python} "{Path(script).as_posix()}"'
     found = shutil.which('python3')
     same = found and os.path.realpath(found) == os.path.realpath(sys.executable)
     # Ordinary paths keep the "..." form (changing a hook command makes Codex ask for trust again); a path with
     # characters a shell would expand inside double quotes is quoted strictly.
     quoted = shlex.quote(script) if any(c in script for c in '$`"\\') else f'"{script}"'
     return f'{"python3" if same else shlex.quote(sys.executable)} {quoted}'
+
+
+def short_path(path):
+    """Windows: the 8.3 form of an existing path (no spaces), or the path itself."""
+    if os.name != 'nt' or ' ' not in str(path):
+        return str(path)
+    try:
+        import ctypes
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = ctypes.windll.kernel32.GetShortPathNameW(str(path), buffer, len(buffer))
+        return buffer.value if 0 < length < len(buffer) else str(path)
+    except (OSError, AttributeError):
+        return str(path)
 
 
 def hook_argv():

@@ -163,8 +163,9 @@ def diagnose_codex(home, project, env):
         print('With stderr shown:', result)
     hook = json.loads((home / '.codex' / 'hooks.json').read_text(encoding='utf-8'))['hooks']['SessionStart'][0]['hooks'][0]
     payload = json.dumps({'cwd': str(project), 'hook_event_name': 'SessionStart', 'session_id': 'diagnose'})
-    # Codex: `%COMSPEC% /C "<command>"` on Windows, `$SHELL -lc <command>` elsewhere.
-    command = f'cmd.exe /C "{hook["command"]}"' if os.name == 'nt' else ['/bin/sh', '-lc', hook['command']]
+    # Codex runs hooks in the session's shell: PowerShell on Windows, the user's shell elsewhere.
+    command = (['powershell', '-NoProfile', '-Command', hook['command']] if os.name == 'nt'
+               else ['/bin/sh', '-lc', hook['command']])
     run = subprocess.run(command, cwd=project, env=env, input=payload, capture_output=True, text=True, encoding='utf-8',
                          errors='replace')
     print(f'hook command: {hook["command"]}\nrun as Codex does: exit {run.returncode}\n'
