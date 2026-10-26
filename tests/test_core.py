@@ -25,6 +25,43 @@ init_project.user_home = lambda: Path(tempfile.gettempdir()) / 'ai-baton-tests-n
 init_project.agent_binary = lambda kind: f'/usr/bin/{kind}'
 
 
+WINDOWS = os.name == 'nt'
+
+
+def rmtree(path):
+    """shutil.rmtree that also removes read-only files (git objects), which Windows refuses to delete otherwise."""
+    def retry(func, name, _):
+        os.chmod(name, 0o700)
+        func(name)
+    shutil.rmtree(path, onerror=retry)
+
+
+def fake_tool(folder, name, code):
+    """A stand-in command that runs the Python `code`: an executable script, or on Windows a .cmd wrapper (the form
+    npm installs agents in). Returns its path."""
+    script = folder / f'{name}.py'
+    script.write_text('import sys\nsys.stdout.reconfigure(encoding="utf-8")\n' + code, encoding='utf-8')
+    if WINDOWS:
+        tool = folder / f'{name}.cmd'
+        tool.write_text(f'@"{sys.executable}" "{script}" %*\n')
+    else:
+        tool = folder / name
+        tool.write_text(f'#!{sys.executable}\n' + script.read_text(encoding='utf-8'), encoding='utf-8')
+        tool.chmod(0o755)
+    return tool
+
+
+def alive(pid):
+    if WINDOWS:  # os.kill(pid, 0) would terminate the process on Windows.
+        out = subprocess.run(['tasklist', '/FI', f'PID eq {pid}', '/NH'], capture_output=True, text=True).stdout
+        return str(pid) in out
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
 def payload(project, event, session='s1', **extra):
     return {'cwd': str(project), 'hook_event_name': event, 'session_id': session, **extra}
 
@@ -363,7 +400,7 @@ class MemoryTiersTest(unittest.TestCase):
     def test_git_project_points_at_commit(self):
         run = lambda *a: subprocess.run(['git', *a], cwd=self.project, check=True, capture_output=True)
         run('init', '-q')
-        shutil.rmtree(self.project / '.agent-memory' / changes.SHADOW_DIR)  # Init's baseline, taken before git existed.
+        rmtree(self.project / '.agent-memory' / changes.SHADOW_DIR)  # Init's baseline, taken before git existed.
         run('-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '-A')
         run('-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'x')
         found = self.stop('claude', 'Done.')['changes']
@@ -437,7 +474,8 @@ class ModelsTest(unittest.TestCase):
         text = self.toml.read_text()
         self.assertTrue(text.startswith('model_reasoning_effort = "high"\nmodel = "gpt-b"\n'))
         self.assertIn('model = "not-top-level"', text)
-        self.assertEqual(self.toml.stat().st_mode & 0o777, 0o600)
+        if not WINDOWS:  # No Unix mode bits there.
+            self.assertEqual(self.toml.stat().st_mode & 0o777, 0o600)
         self.assertEqual((models.codex()['model'], models.codex()['effort']), ('gpt-b', 'high'))
         models.set_model('codex', 'default', 'default')
         self.assertEqual(self.toml.read_text(), 'service_tier = "default"\n\n[projects."/x"]\nmodel = "not-top-level"\n')
@@ -564,18 +602,23 @@ class ReviewTest(unittest.TestCase):
         self.bin = Path(self.tmp.name) / 'bin'
         self.bin.mkdir()
         # Fake Codex: writes the prompt and stdin it got into the -o file. Fake Claude: prints them.
-        fake = {'codex': 'args="$*"; out=""; while [ $# -gt 1 ]; do [ "$1" = -o ] && out=$2; shift; done; '
-                         '{ echo "codex args: $args"; echo "codex saw: $1"; echo "env: $BATON_REVIEW"; cat; } > "$out"',
-                'claude': 'echo "claude args: $*"; echo "env: $BATON_REVIEW"; cat'}
-        for name, body in fake.items():
-            (self.bin / name).write_text(f'#!/bin/sh\n{body}\n')
-            (self.bin / name).chmod(0o755)
-        self.patch = mock.patch.object(review, 'binary', lambda kind: str(self.bin / kind))
+        self.tools = {}
+        self.fake('codex', "import os\nargs = sys.argv[1:]\nout = open(args[args.index('-o') + 1], 'w', encoding='utf-8')\n"
+                           "out.write('codex args: ' + ' '.join(args) + '\\ncodex saw: ' + args[-1] + '\\nenv: ' + "
+                           "os.environ.get('BATON_REVIEW', '') + '\\n')\n"
+                           "out.write(sys.stdin.buffer.read().decode('utf-8'))\n")
+        self.fake('claude', "import os\nprint('claude args: ' + ' '.join(sys.argv[1:]))\n"
+                            "print('env: ' + os.environ.get('BATON_REVIEW', ''))\n"
+                            "print(sys.stdin.buffer.read().decode('utf-8'))\n")
+        self.patch = mock.patch.object(review, 'binary', lambda kind: str(self.tools[kind]))
         self.patch.start()
 
     def tearDown(self):
         self.patch.stop()
         self.tmp.cleanup()
+
+    def fake(self, name, code):
+        self.tools[name] = fake_tool(self.bin, name, code)
 
     def test_reviews_uncommitted_changes_including_new_files(self):
         (self.project / 'NEW.md').write_text('brand new line\n')
@@ -627,7 +670,7 @@ class ReviewTest(unittest.TestCase):
         (fresh / 'staged.py').write_text('print("staged")\n')
         subprocess.run(['git', 'add', 'staged.py'], cwd=fresh, check=True)
         (fresh / 'staged.py').write_text('print("edited after staging")\n')
-        (fresh / 'café.py').write_text('print("café")\n')
+        (fresh / 'café.py').write_text('print("café")\n', encoding='utf-8')
         diff, what, notes = review.collect_diff(fresh)
         self.assertIn('edited after staging', diff)
         self.assertNotIn('print("staged")', diff)  # Only the final content, not the intermediate staged one.
@@ -654,7 +697,7 @@ class ReviewTest(unittest.TestCase):
             self.assertIn('files in the commit', notes)
             self.assertIn('one.txt', notes)
         # A stalled git is stopped by the deadline instead of hanging the review.
-        stalled = subprocess.Popen(['sleep', '30'], stdout=subprocess.PIPE)  # Real, created before the patch.
+        stalled = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], stdout=subprocess.PIPE)  # Real, created before the patch.
         with mock.patch.object(review, 'GIT_TIMEOUT', 0.5), mock.patch.object(review.subprocess, 'Popen', return_value=stalled):
             started = time.time()
             with self.assertRaises(review.ReviewError) as caught:
@@ -702,30 +745,38 @@ class ReviewTest(unittest.TestCase):
         with self.assertRaises(review.ReviewError):
             review.collect_diff(Path(self.tmp.name))  # Not a repository.
         # Text plus a failing exit code is an error, not a review.
-        (self.bin / 'claude').write_text('#!/bin/sh\necho partial answer\nexit 2\n')
+        self.fake('claude', 'print("partial answer")\nraise SystemExit(2)\n')
         (self.project / 'X').write_text('x')
         with self.assertRaises(review.ReviewError):
             review.review(self.project, 'claude')
 
     def test_cancel_stops_the_reviewer(self):
         import signal
-        # A reviewer that ignores SIGTERM still has to go (SIGKILL after the grace period).
-        (self.bin / 'codex').write_text(f"#!/bin/sh\ntrap '' TERM\nsleep 30 &\necho $! > {self.tmp.name}/child\n"
-                                        f"echo $$ > {self.tmp.name}/pid\nsleep 30\n")
+        # A reviewer that ignores SIGTERM still has to go (SIGKILL after the grace period), and so does its child.
+        # On Windows the extension ends the whole tree with taskkill instead of signalling the CLI.
+        tmp = Path(self.tmp.name)
+        self.fake('codex', 'import os, signal, subprocess, time\n'
+                           'if hasattr(signal, "SIGTERM"): signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+                           'child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])\n'
+                           f'open({str(tmp / "child")!r}, "w").write(str(child.pid))\n'
+                           f'open({str(tmp / "pid")!r}, "w").write(str(os.getpid()))\n'
+                           'time.sleep(30)\n')
         (self.project / 'X').write_text('x')
         cli = subprocess.Popen([sys.executable, str(ROOT / 'bin' / 'baton'), 'review', '--agent', 'codex', '--path',
-                                str(self.project)], env={**os.environ, 'PATH': f'{self.bin}:{os.environ["PATH"]}'})
-        pid_file = Path(self.tmp.name) / 'pid'
-        for _ in range(100):
+                                str(self.project)], env={**os.environ, 'PATH': f'{self.bin}{os.pathsep}{os.environ["PATH"]}'})
+        pid_file = tmp / 'pid'
+        for _ in range(200):
             if pid_file.exists() and pid_file.read_text().strip():
                 break
             time.sleep(0.05)
-        cli.send_signal(signal.SIGTERM)
+        if WINDOWS:
+            subprocess.run(['taskkill', '/T', '/F', '/PID', str(cli.pid)], capture_output=True)
+        else:
+            cli.send_signal(signal.SIGTERM)
         cli.wait(timeout=15)
-        time.sleep(0.2)
+        time.sleep(0.5)
         for name in ('pid', 'child'):  # The reviewer and a process it started.
-            with self.assertRaises(ProcessLookupError, msg=name):
-                os.kill(int((Path(self.tmp.name) / name).read_text()), 0)
+            self.assertFalse(alive(int((tmp / name).read_text())), name)
 
     def test_clean_tree_with_a_conversation_reviews_its_commits_or_its_replies(self):
         g = ['git', '-c', 'user.email=t@t', '-c', 'user.name=t']
@@ -817,11 +868,11 @@ class ReviewTest(unittest.TestCase):
         older = Path(self.tmp.name) / 'older-nogit'
         older.mkdir()
         init_project.init(older)
-        shutil.rmtree(older / '.agent-memory' / changes.SHADOW_DIR)
+        rmtree(older / '.agent-memory' / changes.SHADOW_DIR)
         hook.run('codex', payload(older, 'UserPromptSubmit', 'c1', prompt='go'))
         self.assertTrue((older / '.agent-memory' / changes.SHADOW_DIR).is_dir())
         # Out of time or interrupted (an empty shadow repo): no baseline now, a retry at the next prompt.
-        shutil.rmtree(older / '.agent-memory' / changes.SHADOW_DIR)
+        rmtree(older / '.agent-memory' / changes.SHADOW_DIR)
         with mock.patch.object(changes, 'BASELINE_BUDGET', 0):
             hook.run('codex', payload(older, 'UserPromptSubmit', 'c1', prompt='go'))
         shadow = older / '.agent-memory' / changes.SHADOW_DIR
@@ -844,7 +895,7 @@ class ReviewTest(unittest.TestCase):
         legacy = Path(self.tmp.name) / 'legacy-nogit'
         legacy.mkdir()
         init_project.init(legacy)
-        shutil.rmtree(legacy / '.agent-memory' / changes.SHADOW_DIR)
+        rmtree(legacy / '.agent-memory' / changes.SHADOW_DIR)
         hook.run('codex', payload(legacy, 'Stop', 'c0', last_assistant_message='Codex did earlier work.'))
         (legacy / 'mine.txt').write_text('mine\n')
         hook.run('claude', payload(legacy, 'Stop', 's1', last_assistant_message='Claude added mine.txt.'))
@@ -881,6 +932,7 @@ class ReviewTest(unittest.TestCase):
         self.assertIn('Read them', result['review'])
         self.assertIn('more changed files were not recorded by name', result['review'])
 
+    @unittest.skipIf(WINDOWS, 'SIGTERM handling; a stand-in git on PATH would also have to be an .exe')
     def test_cancel_while_collecting_stops_git(self):
         import signal
         real_git = shutil.which('git')
@@ -916,6 +968,8 @@ class ReviewTest(unittest.TestCase):
         self.assertIn('inner change', text)
         self.assertNotIn('outer change', text)
         # Individually fine but together slow git calls hit the shared deadline.
+        if WINDOWS:
+            return  # A stand-in git on PATH would have to be an .exe.
         real_git = shutil.which('git')
         slow = self.bin / 'git'
         slow.write_text(f'#!/bin/sh\n[ "$1" = diff ] && sleep 0.4\nexec {real_git} "$@"\n')
@@ -929,7 +983,7 @@ class ReviewTest(unittest.TestCase):
         self.assertIn('collecting the changes', str(caught.exception))
 
     def test_empty_answer_is_an_error(self):
-        (self.bin / 'codex').write_text('#!/bin/sh\nexit 3\n')
+        self.fake('codex', 'raise SystemExit(3)\n')
         (self.project / 'X').write_text('x')
         with self.assertRaises(review.ReviewError):
             review.review(self.project, 'codex')

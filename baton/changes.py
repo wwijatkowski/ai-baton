@@ -12,6 +12,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from .project import write_text
+
 SHADOW_DIR = 'shadow.git'
 SKIP_DIRS = {'.git', '.agent-memory', 'node_modules', '.venv', 'venv', 'env', '__pycache__', 'dist', 'build',
              'target', '.next', '.cache', '.idea', '.vscode', '.pytest_cache', '.mypy_cache', '.tox'}
@@ -86,9 +88,9 @@ def from_shadow(root, mem, message, deadline=None):
     if exclude is None:
         return None
     (git_dir / 'info').mkdir(exist_ok=True)
-    (git_dir / 'info' / 'exclude').write_text(exclude, encoding='utf-8')
+    write_text(git_dir / 'info' / 'exclude', exclude)
     # Outranks the project's .gitattributes: no clean filter (an external program) runs while snapshotting.
-    (git_dir / 'info' / 'attributes').write_text('* -filter\n', encoding='utf-8')
+    write_text(git_dir / 'info' / 'attributes', '* -filter\n')
     if run('add', '-A', timeout=6) is None:
         return None
     before = run('rev-parse', '-q', '--verify', 'HEAD')

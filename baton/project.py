@@ -37,12 +37,20 @@ def baton_command():
     checkout's bin/baton. The interpreter is `python3` when that is the one running now (a stable, short command), else
     the full path of the running one, so hooks use the same Python the extension checked."""
     script = os.environ.get('BATON_LAUNCHER') or str(HOME / 'bin' / 'baton')
+    if os.name == 'nt':
+        # Forward slashes in double quotes read the same in cmd and Git Bash (a backslash is an escape in bash).
+        return ' '.join(f'"{Path(p).as_posix()}"' for p in hook_argv()[:2])
     found = shutil.which('python3')
     same = found and os.path.realpath(found) == os.path.realpath(sys.executable)
     # Ordinary paths keep the "..." form (changing a hook command makes Codex ask for trust again); a path with
     # characters a shell would expand inside double quotes is quoted strictly.
     quoted = shlex.quote(script) if any(c in script for c in '$`"\\') else f'"{script}"'
     return f'{"python3" if same else shlex.quote(sys.executable)} {quoted}'
+
+
+def hook_argv():
+    """[interpreter, launcher script] of the hook command, absolute (Windows hooks run them without a shell)."""
+    return [sys.executable, os.environ.get('BATON_LAUNCHER') or str(HOME / 'bin' / 'baton')]
 
 
 def agent_binary(kind):
@@ -52,7 +60,8 @@ def agent_binary(kind):
         return found
     patterns = {'codex': '~/.vscode/extensions/openai.chatgpt-*/bin/*/codex',
                 'claude': '~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude'}
-    candidates = glob.glob(os.path.expanduser(patterns.get(kind, '')))
+    exe = '.exe' if os.name == 'nt' else ''
+    candidates = glob.glob(os.path.expanduser(patterns.get(kind, '') + exe)) if kind in patterns else []
     return max(candidates, key=os.path.getmtime) if candidates else None
 
 

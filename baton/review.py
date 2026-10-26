@@ -24,7 +24,7 @@ from pathlib import Path
 
 from . import changes
 from .changes import BASELINE_REF, SHADOW_CONFIG, SHADOW_DIR
-from .project import MEMORY_DIR, agent_binary, find_root, load_agents, read_json
+from .project import MEMORY_DIR, agent_binary, find_root, load_agents, read_json, write_text
 from .recall import entries
 
 MAX_DIFF = 200_000
@@ -228,12 +228,13 @@ def collect_shadow(project, since=None, first=None):
         scratch = Path(tmp) / 'scratch'
         git(tmp, 'init', '-q', str(scratch))
         scratch_dir = scratch / '.git'
-        (scratch_dir / 'objects' / 'info' / 'alternates').write_text(str((shadow / 'objects').resolve()) + '\n', encoding='utf-8')
+        # Git reads its own files byte by byte: LF only (Windows text mode would end the path with \r).
+        write_text(scratch_dir / 'objects' / 'info' / 'alternates', str((shadow / 'objects').resolve()) + '\n')
         (scratch_dir / 'info').mkdir(exist_ok=True)
         # info/attributes outranks every .gitattributes in the project: no clean filter (an external program) runs.
-        (scratch_dir / 'info' / 'attributes').write_text('* -filter\n', encoding='utf-8')
+        write_text(scratch_dir / 'info' / 'attributes', '* -filter\n')
         if (shadow / 'info' / 'exclude').exists():
-            (scratch_dir / 'info' / 'exclude').write_text((shadow / 'info' / 'exclude').read_text(encoding='utf-8'), encoding='utf-8')
+            write_text(scratch_dir / 'info' / 'exclude', (shadow / 'info' / 'exclude').read_text(encoding='utf-8'))
         scratch_git = ('--git-dir', str(scratch_dir), '--work-tree', str(project), *SHADOW_CONFIG)
         git(project, 'add', '-A', prefix=scratch_git)
         diff = git(project, 'diff', '--cached', *SAFE_DIFF, '--stat', '--patch', base or head,
@@ -340,6 +341,11 @@ def run_reviewer(kind, root, prompt, diff, notes='', block='diff'):
     if not exe:
         raise ReviewError(f'{kind} CLI not found')
     stdin = (f'<notes>\n{notes}\n</notes>\n' if notes else '') + f'<{block}>\n{diff}\n</{block}>\n'
+    if exe.lower().endswith(('.cmd', '.bat')):
+        # A Windows batch wrapper (npm installs one) goes through cmd.exe, which cuts arguments at a line break and
+        # expands % and quotes: the prompt goes through stdin too, behind a fixed one-line argument.
+        stdin = f'<instructions>\n{prompt}\n</instructions>\n' + stdin
+        prompt = 'Follow the <instructions> block at the start of the input.'
     if kind == 'codex':
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / 'last.md'

@@ -4,11 +4,8 @@ Codex runs project and user hooks only after the user trusts them (Review hooks 
 changes. Its app-server reports that per hook (`hooks/list` -> trustStatus), so we ask it instead of guessing.
 Not a hook itself: this may take a moment and is only called by the panel and the CLI.
 """
-import glob
 import json
-import os
 import queue
-import shutil
 import subprocess
 import threading
 import time
@@ -16,19 +13,11 @@ from pathlib import Path
 
 from . import init_project
 from .init_project import HOOK_FILES, has_baton_hooks, is_baton_hook
-from .project import find_root, load_agents, read_json, write_json
+from .project import agent_binary, find_root, load_agents, read_json, write_json
 
 CACHE = Path.home() / '.cache' / 'ai-baton' / 'hook-trust-v2.json'  # Bump the name when the result format changes.
 CODEX_EVENTS = {'sessionStart', 'userPromptSubmit', 'stop'}
 TIMEOUT = 8
-
-
-def codex_binary():
-    found = shutil.which('codex')
-    if found:
-        return found
-    bundled = glob.glob(str(Path.home() / '.vscode' / 'extensions' / 'openai.chatgpt-*' / 'bin' / '*' / 'codex'))
-    return max(bundled, key=os.path.getmtime) if bundled else None
 
 
 def codex_hooks(binary, cwd):
@@ -73,7 +62,7 @@ def codex_hooks(binary, cwd):
 
 
 def codex_trust(root):
-    binary = codex_binary()
+    binary = agent_binary('codex')
     if not binary:
         return {'state': 'unknown', 'detail': 'Codex CLI not found'}
     files = [Path.home() / '.codex' / 'config.toml', init_project.user_home() / HOOK_FILES['codex'], root / HOOK_FILES['codex']]
