@@ -67,10 +67,7 @@ def main():
     from baton import hookcheck
     hooks = hookcheck.codex_hooks(codex, project)
     check(len(hooks) == 3, f'Codex lists our 3 hooks: {hooks}')
-    (home / '.codex').mkdir(exist_ok=True)
-    with open(home / '.codex' / 'config.toml', 'a', encoding='utf-8') as config:
-        for hook in hooks:
-            config.write(f'[hooks.state.{json.dumps(hook["key"])}]\ntrusted_hash = "{hook["currentHash"]}"\n\n')
+    approve(home, hooks)
     shutil.rmtree(home / '.cache' / 'ai-baton', ignore_errors=True)  # hook-status caches Codex's answer.
     status = json.loads(baton('hook-status', '--json', str(project)))
     check(status['codex']['state'] == 'ok' and status['claude']['state'] == 'ok', f'hook-status after approval: {status}')
@@ -97,6 +94,13 @@ def main():
     print(f'Real agents ran AI Baton hooks on {sys.platform}: OK')
 
 
+def approve(home, hooks):
+    """Trust these Codex hooks the way its "Allow all" does: their current hash in config.toml."""
+    (home / '.codex').mkdir(exist_ok=True)
+    (home / '.codex' / 'config.toml').write_text(''.join(
+        f'[hooks.state.{json.dumps(h["key"])}]\ntrusted_hash = "{h["currentHash"]}"\n\n' for h in hooks), encoding='utf-8')
+
+
 def diagnose_codex(home, project, env):
     """What went wrong: the hook command run the way Codex runs it, and what Codex recorded about its hooks."""
     hook = json.loads((home / '.codex' / 'hooks.json').read_text(encoding='utf-8'))['hooks']['SessionStart'][0]['hooks'][0]
@@ -112,6 +116,28 @@ def diagnose_codex(home, project, env):
     run = subprocess.run(command, cwd=project, env=bare, input=payload, capture_output=True, text=True,
                          encoding='utf-8', errors='replace')
     print(f'with a bare environment: exit {run.returncode}\nstderr: {run.stderr[-800:]}')
+    # Run it inside Codex once more, next to a hook that dumps the environment Codex gives hooks; both write files.
+    trace = home / 'trace'
+    trace.mkdir(exist_ok=True)
+    out, err, envdump = (str(trace / n).replace('\\', '/') for n in ('out.txt', 'err.txt', 'env.txt'))
+    dump = f'set > "{envdump}"' if os.name == 'nt' else f'env > "{envdump}"'
+    config = json.loads((home / '.codex' / 'hooks.json').read_text(encoding='utf-8'))
+    config['hooks']['SessionStart'] = [{'hooks': [{'type': 'command', 'command': dump, 'timeout': 10}]},
+                                       {'hooks': [{'type': 'command', 'timeout': 10,
+                                                   'command': f'{hook["command"]} > "{out}" 2> "{err}"'}]}]
+    (home / '.codex' / 'hooks.json').write_text(json.dumps(config), encoding='utf-8')
+    from baton import hookcheck
+    approve(home, hookcheck.codex_hooks(shutil.which('codex'), project))
+    subprocess.run([shutil.which('codex'), 'exec', '--skip-git-repo-check', 'say hi'], cwd=project, env=env,
+                   capture_output=True, stdin=subprocess.DEVNULL, timeout=300)
+    for name in ('out.txt', 'err.txt', 'env.txt'):
+        path = trace / name
+        text = path.read_text(encoding='utf-8', errors='replace') if path.exists() else '(not written)'
+        if name == 'env.txt' and path.exists():  # Names only, plus the ones that decide how Python starts.
+            keep = ('PATH', 'SYSTEMROOT', 'COMSPEC', 'HOME', 'USERPROFILE', 'TEMP', 'PYTHONHOME', 'PATHEXT')
+            text = '\n'.join(line if line.split('=')[0].upper() in keep else line.split('=')[0]
+                             for line in text.splitlines())
+        print(f'--- inside Codex, {name}:\n{text[-2500:]}')
     for rollout in (home / '.codex' / 'sessions').rglob('*.jsonl'):
         for line in rollout.read_text(encoding='utf-8', errors='replace').splitlines():
             if 'hook' in line.lower():
