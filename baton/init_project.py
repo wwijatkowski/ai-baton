@@ -19,7 +19,7 @@ class InitError(Exception):
 
 
 def template(filename, **values):
-    text = (TEMPLATES / filename).read_text()
+    text = (TEMPLATES / filename).read_text(encoding='utf-8')
     for key, value in values.items():
         text = text.replace('{' + key + '}', value)
     return text
@@ -30,7 +30,7 @@ def ensure_file(path, content, log):
         log.append(f'= {path.name} already exists (unchanged)')
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
+    path.write_text(content, encoding='utf-8')
     log.append(f'+ {path}')
 
 
@@ -38,10 +38,10 @@ def ensure_agents_md(root, block, log):
     path = root / 'AGENTS.md'
     if not path.exists():
         return ensure_file(path, template('AGENTS.md', name=root.name, block=block), log)
-    text = path.read_text()
+    text = path.read_text(encoding='utf-8')
     new = BLOCK_RE.sub(lambda _: block.strip(), text) if BLOCK_RE.search(text) else text.rstrip() + '\n\n' + block
     if new != text:
-        path.write_text(new)
+        path.write_text(new, encoding='utf-8')
         log.append('~ AGENTS.md: added/refreshed the AI Baton section')
 
 
@@ -49,9 +49,9 @@ def ensure_claude_md(root, log):
     path = root / 'CLAUDE.md'
     if not path.exists():
         return ensure_file(path, template('CLAUDE.md', name=root.name), log)
-    text = path.read_text()
+    text = path.read_text(encoding='utf-8')
     if '@AGENTS.md' not in text:
-        path.write_text(text.rstrip() + '\n\nShared project rules:\n@AGENTS.md\n@docs/AGENT_HANDOFF.md\n')
+        path.write_text(text.rstrip() + '\n\nShared project rules:\n@AGENTS.md\n@docs/AGENT_HANDOFF.md\n', encoding='utf-8')
         log.append('~ CLAUDE.md: added @AGENTS.md import')
 
 
@@ -190,9 +190,9 @@ def install_user_hooks(only=None):
 
 def ensure_gitignore(root, log):
     path = root / '.gitignore'
-    lines = path.read_text().splitlines() if path.exists() else []
+    lines = path.read_text(encoding='utf-8').splitlines() if path.exists() else []
     if not any(l.strip().rstrip('/') == MEMORY_DIR for l in lines):
-        path.write_text('\n'.join(lines + [f'{MEMORY_DIR}/']).lstrip('\n') + '\n')
+        path.write_text('\n'.join(lines + [f'{MEMORY_DIR}/']).lstrip('\n') + '\n', encoding='utf-8')
         log.append(f'~ .gitignore: {MEMORY_DIR}/')
 
 
@@ -219,7 +219,7 @@ def init(root, replace_legacy=False, only=None):
     if not marker.exists():
         write_json(marker, {'name': root.name, 'created': today, 'extraAgents': []})
         log.append(f'+ {marker}')
-    block = (TEMPLATES / 'agents_block.md').read_text()
+    block = (TEMPLATES / 'agents_block.md').read_text(encoding='utf-8')
     ensure_agents_md(root, block, log)
     ensure_claude_md(root, log)
     ensure_file(root / 'docs' / 'AGENT_HANDOFF.md', template('AGENT_HANDOFF.md', date=today), log)

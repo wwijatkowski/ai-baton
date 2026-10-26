@@ -228,12 +228,12 @@ def collect_shadow(project, since=None, first=None):
         scratch = Path(tmp) / 'scratch'
         git(tmp, 'init', '-q', str(scratch))
         scratch_dir = scratch / '.git'
-        (scratch_dir / 'objects' / 'info' / 'alternates').write_text(str((shadow / 'objects').resolve()) + '\n')
+        (scratch_dir / 'objects' / 'info' / 'alternates').write_text(str((shadow / 'objects').resolve()) + '\n', encoding='utf-8')
         (scratch_dir / 'info').mkdir(exist_ok=True)
         # info/attributes outranks every .gitattributes in the project: no clean filter (an external program) runs.
-        (scratch_dir / 'info' / 'attributes').write_text('* -filter\n')
+        (scratch_dir / 'info' / 'attributes').write_text('* -filter\n', encoding='utf-8')
         if (shadow / 'info' / 'exclude').exists():
-            (scratch_dir / 'info' / 'exclude').write_text((shadow / 'info' / 'exclude').read_text())
+            (scratch_dir / 'info' / 'exclude').write_text((shadow / 'info' / 'exclude').read_text(encoding='utf-8'), encoding='utf-8')
         scratch_git = ('--git-dir', str(scratch_dir), '--work-tree', str(project), *SHADOW_CONFIG)
         git(project, 'add', '-A', prefix=scratch_git)
         diff = git(project, 'diff', '--cached', *SAFE_DIFF, '--stat', '--patch', base or head,
@@ -289,9 +289,13 @@ def binary(kind):
 
 def stop(proc, group):
     """End a process we started. A group (the reviewer and anything it spawned) gets SIGTERM, then SIGKILL after a
-    short grace period; either way it is reaped."""
+    short grace period; either way it is reaped. Windows has no process groups to signal: taskkill ends the tree."""
     if not group:
         proc.kill()
+        proc.wait()
+        return
+    if os.name == 'nt':
+        subprocess.run(['taskkill', '/T', '/F', '/PID', str(proc.pid)], capture_output=True)
         proc.wait()
         return
     for sig, grace in ((signal.SIGTERM, 3), (signal.SIGKILL, 3)):
@@ -316,8 +320,9 @@ def cancel(*_):
 
 def run(command, root, stdin):
     """Run the reviewer in its own process group so cancelling `baton review` stops it and its children too."""
+    group = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else {'start_new_session': True}
     proc = subprocess.Popen(command, cwd=root, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, start_new_session=True, env={**os.environ, ENV_FLAG: '1'})
+                            text=True, encoding='utf-8', errors='replace', env={**os.environ, ENV_FLAG: '1'}, **group)
     ACTIVE.append((proc, True))
     try:
         out, err = proc.communicate(stdin, timeout=TIMEOUT)
@@ -341,7 +346,7 @@ def run_reviewer(kind, root, prompt, diff, notes='', block='diff'):
             # Read-only sandbox and never ask for approval, whatever the user's config says.
             code, _, err = run([exe, 'exec', '--sandbox', 'read-only', '-c', 'approval_policy="never"',
                                 '--skip-git-repo-check', '-o', str(out), prompt], root, stdin)
-            text = out.read_text() if out.exists() else ''
+            text = out.read_text(encoding='utf-8') if out.exists() else ''
     else:
         # --tools limits which tools exist (not just which are allowed), so user settings cannot widen it.
         code, text, err = run([exe, '-p', prompt, '--tools', 'Read,Grep,Glob', '--strict-mcp-config'], root, stdin)
@@ -394,7 +399,7 @@ def author_context(project, session=None):
         last = max(snaps, key=lambda x: x['saved_at'])
         parts.append(f'Last checkpoint, {last["agent"]} at {last["saved_at"][:16]} UTC:\n{last["summary"][:MAX_CONTEXT // 2]}')
     try:
-        handoff = (project / 'docs' / 'AGENT_HANDOFF.md').read_text()
+        handoff = (project / 'docs' / 'AGENT_HANDOFF.md').read_text(encoding='utf-8')
     except OSError:
         handoff = ''
     match = re.search(r'^## Recently done\n(.*?)(?=^## |\Z)', handoff, re.S | re.M)

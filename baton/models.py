@@ -115,7 +115,7 @@ def toml_set_top_level(text, key, value):
 
 
 def codex():
-    top = toml_top_level(CODEX_CONFIG.read_text() if CODEX_CONFIG.exists() else '')
+    top = toml_top_level(CODEX_CONFIG.read_text(encoding='utf-8') if CODEX_CONFIG.exists() else '')
     listed = [m for m in (read_json(CODEX_MODELS, {}) or {}).get('models', [])
               if isinstance(m, dict) and m.get('slug') and m.get('visibility') == 'list']
     options = [{'value': m['slug'], 'label': m.get('display_name') or m['slug'], 'description': m.get('description'),
@@ -134,7 +134,7 @@ def codex():
 
 
 def set_codex(model, effort):
-    text = CODEX_CONFIG.read_text() if CODEX_CONFIG.exists() else ''
+    text = CODEX_CONFIG.read_text(encoding='utf-8') if CODEX_CONFIG.exists() else ''
     text = toml_set_top_level(text, 'model', model)
     text = toml_set_top_level(text, 'model_reasoning_effort', effort)
     try:

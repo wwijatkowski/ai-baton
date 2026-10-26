@@ -7,8 +7,16 @@ import shlex
 import shutil
 import sys
 import tempfile
+import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+    import msvcrt
 
 HOME = Path(__file__).resolve().parents[1]
 MARKER = '.baton.json'
@@ -62,7 +70,7 @@ def find_root(start):
 
 
 def builtin_agents():
-    return json.loads((HOME / 'baton' / 'agents.json').read_text())
+    return json.loads((HOME / 'baton' / 'agents.json').read_text(encoding='utf-8'))
 
 
 def load_agents(root=None, hidden=False):
@@ -194,9 +202,37 @@ def clip(text, chars):
 
 def read_json(path, default=None):
     try:
-        return json.loads(Path(path).read_text())
+        return json.loads(Path(path).read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return default
+
+
+@contextmanager
+def file_lock(path, timeout=5):
+    """Hold an exclusive lock on `path` (created if missing) across processes. Gives up with TimeoutError after
+    `timeout` seconds, so a stuck writer cannot hold a hook past its time limit."""
+    with open(path, 'a+b') as stream:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                if fcntl:
+                    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                else:
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)  # Byte 0, also when the file is empty.
+                break
+            except OSError:
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f'{path} is locked')
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            if fcntl:
+                fcntl.flock(stream, fcntl.LOCK_UN)
+            else:
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def write_json(path, data, private=False):
@@ -211,13 +247,21 @@ def write_text(path, text, private=False):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp = tempfile.mkstemp(dir=path.parent)
     try:
-        with os.fdopen(fd, 'w') as stream:
+        with os.fdopen(fd, 'w', encoding='utf-8', newline='') as stream:
             stream.write(text)
         if path.exists():
             os.chmod(temp, path.stat().st_mode & 0o777)
         elif not private:
             os.chmod(temp, 0o644)
-        os.replace(temp, path)
+        # Windows refuses to replace a file another process has open (a reader, an antivirus scan) for a moment.
+        for attempt in range(20):
+            try:
+                os.replace(temp, path)
+                break
+            except PermissionError:
+                if os.name != 'nt' or attempt == 19:
+                    raise
+                time.sleep(0.05)
     finally:
         if os.path.exists(temp):
             os.unlink(temp)

@@ -115,7 +115,9 @@ function baton(args, { timeout = 300000, token } = {}) {
     }
     const child = cp.execFile(config('python'), [cli, ...args], { maxBuffer: 64 * 1024 * 1024, timeout },
       (error, stdout, stderr) => (error ? reject(new Error((stderr || error.message).trim())) : resolve(stdout)));
-    if (token) token.onCancellationRequested(() => child.kill());
+    // On Windows kill() ends only the CLI, without running its cleanup, so the reviewer it started would live on.
+    if (token) token.onCancellationRequested(() => (process.platform === 'win32'
+      ? cp.execFile('taskkill', ['/T', '/F', '/PID', String(child.pid)], () => {}) : child.kill()));
   });
 }
 

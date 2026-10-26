@@ -7,9 +7,10 @@ Not a hook itself: this may take a moment and is only called by the panel and th
 import glob
 import json
 import os
-import select
+import queue
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -33,7 +34,16 @@ def codex_binary():
 def codex_hooks(binary, cwd):
     """The hooks Codex would run in `cwd`, with trustStatus, from a short-lived app-server."""
     proc = subprocess.Popen([binary, 'app-server'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, text=True, bufsize=1)
+                            stderr=subprocess.DEVNULL, text=True, encoding='utf-8', errors='replace', bufsize=1)
+    # A reader thread, not select(): Windows cannot select() on a pipe.
+    lines = queue.Queue()
+
+    def read():
+        for line in proc.stdout:
+            lines.put(line)
+        lines.put(None)  # End of output.
+
+    threading.Thread(target=read, daemon=True).start()
     try:
         def send(message):
             proc.stdin.write(json.dumps({'jsonrpc': '2.0', **message}) + '\n')
@@ -42,22 +52,21 @@ def codex_hooks(binary, cwd):
         send({'id': 1, 'method': 'initialize', 'params': {'clientInfo': {'name': 'ai-baton', 'version': '1'}}})
         send({'method': 'initialized'})
         send({'id': 2, 'method': 'hooks/list', 'params': {'cwds': [str(cwd)]}})
-        # Raw reads with our own line framing: select() cannot see data a buffered reader already holds.
-        fd, pending, deadline = proc.stdout.fileno(), b'', time.time() + TIMEOUT
-        while time.time() < deadline:
-            ready, _, _ = select.select([fd], [], [], 0.5)
-            if not ready:
-                continue
-            chunk = os.read(fd, 65536)
-            if not chunk:
+        deadline = time.monotonic() + TIMEOUT
+        while True:
+            try:
+                line = lines.get(timeout=max(0, deadline - time.monotonic()))
+            except queue.Empty:
                 break
-            *lines, pending = (pending + chunk).split(b'\n')
-            for line in filter(None, lines):
-                message = json.loads(line)
-                if message.get('id') == 2:
-                    if 'error' in message:
-                        raise RuntimeError(message['error'].get('message', 'hooks/list failed'))
-                    return [h for entry in message['result']['data'] for h in entry.get('hooks', [])]
+            if line is None:
+                break
+            if not line.strip():
+                continue
+            message = json.loads(line)
+            if message.get('id') == 2:
+                if 'error' in message:
+                    raise RuntimeError(message['error'].get('message', 'hooks/list failed'))
+                return [h for entry in message['result']['data'] for h in entry.get('hooks', [])]
         raise TimeoutError('Codex did not answer')
     finally:
         proc.kill()

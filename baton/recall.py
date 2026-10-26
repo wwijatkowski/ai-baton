@@ -33,7 +33,7 @@ def entries(mem):
     if archive.exists():
         yield from archive_lines(archive)
     if history.exists():
-        yield from history.read_text().splitlines()
+        yield from history.read_text(encoding='utf-8').splitlines()
 
 
 def searchable(snap):

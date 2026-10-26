@@ -86,9 +86,9 @@ def from_shadow(root, mem, message, deadline=None):
     if exclude is None:
         return None
     (git_dir / 'info').mkdir(exist_ok=True)
-    (git_dir / 'info' / 'exclude').write_text(exclude)
+    (git_dir / 'info' / 'exclude').write_text(exclude, encoding='utf-8')
     # Outranks the project's .gitattributes: no clean filter (an external program) runs while snapshotting.
-    (git_dir / 'info' / 'attributes').write_text('* -filter\n')
+    (git_dir / 'info' / 'attributes').write_text('* -filter\n', encoding='utf-8')
     if run('add', '-A', timeout=6) is None:
         return None
     before = run('rev-parse', '-q', '--verify', 'HEAD')

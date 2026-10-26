@@ -9,7 +9,6 @@ hot   -> a short summary per agent, injected here within HOT_BUDGET
 warm  -> the full last reply in .agent-memory/<agent>.json, plus a pointer to the changes (see changes.py)
 cold  -> every checkpoint in history.jsonl and its gzip archive, searched with `baton recall`
 """
-import fcntl
 import gzip
 import json
 import os
@@ -17,8 +16,8 @@ import re
 from datetime import datetime, timezone
 
 from . import changes
-from .project import ARCHIVE, HISTORY, baton_command, clip, find_root, is_working, load_agents, memory_dir, \
-    now_iso, read_json, write_json, write_text
+from .project import ARCHIVE, HISTORY, baton_command, clip, file_lock, find_root, is_working, load_agents, \
+    memory_dir, now_iso, read_json, write_json, write_text
 
 HISTORY_LIMIT = 50
 SEEN_SESSIONS = 20
@@ -100,15 +99,14 @@ def append_history(mem, snapshot):
     same moment, so the whole read-modify-write runs under a lock: unlocked, two writers once interleaved their gzip
     members and damaged the archive."""
     history = mem / HISTORY
-    with open(mem / '.history.lock', 'a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        lines = history.read_text().splitlines() if history.exists() else []
+    with file_lock(mem / '.history.lock'):
+        lines = history.read_text(encoding='utf-8').splitlines() if history.exists() else []
         lines.append(json.dumps(snapshot, ensure_ascii=False))
         overflow, lines = lines[:-HISTORY_LIMIT], lines[-HISTORY_LIMIT:]
         if overflow:
             # Appending writes a new gzip member; readers see one continuous stream.
             archive = mem / ARCHIVE
-            with gzip.open(archive, 'at') as stream:
+            with gzip.open(archive, 'at', encoding='utf-8') as stream:
                 stream.write('\n'.join(overflow) + '\n')
             os.chmod(archive, 0o600)
         write_text(history, '\n'.join(lines) + '\n', private=True)
