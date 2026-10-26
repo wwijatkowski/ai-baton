@@ -4,6 +4,8 @@
 
 > Preview. Works with the Claude Code and Codex extensions, on macOS, Linux and Windows (Windows is new: tested automatically, less used so far). Get it from the VS Code Marketplace, or from Open VSX in Cursor, Windsurf and VSCodium.
 
+![Claude adds a function; a new Codex chat already knows what changed and why; then Codex reviews Claude's work and the review can go back to Claude's conversation](media/screenshots/demo.gif)
+
 ![The AI Baton panel: Claude and Codex with their latest checkpoints, and Recent work](media/screenshots/panel.png)
 
 ## What it does

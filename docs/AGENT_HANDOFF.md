@@ -48,7 +48,7 @@ Releasing: secrets VSCE_PAT and OVSX_PAT are set. Bump the version and add a CHA
    Verified 2026-10-26 from a temporary workflow: the identity signs in and `vsce verify-pat wwijatkowski --azure-credential` succeeds (a role check; a skipped duplicate publish proves nothing, vsce only reads the version list). After the first release without the fallback warning, remove the fallback step; the user deletes VSCE_PAT and the Azure DevOps token.
 3. Optional: a manual look at the VS Code panel on Windows. CI covers the CLIs, hooks and the extension host, not the rendered webview.
 4. Publisher display name (waiting for VSMarketplace@microsoft.com). The user does not want promotional posts for now.
-5. Listing (0.4.1): display name "AI Baton: Claude Code & Codex memory, handoff, review" for Marketplace search (it weighs the name most; the id stays, so it can go back to "AI Baton" any time), wider keywords, Cursor/Windsurf via Open VSX in the description. Left: a 10-15 s GIF at the top of the README (Codex picking up Claude's work), recorded with the real agents.
+5. Listing (0.4.1): display name "AI Baton: Claude Code & Codex memory, handoff, review" for Marketplace search (it weighs the name most; the id stays, so it can go back to "AI Baton" any time), wider keywords, Cursor/Windsurf via Open VSX in the description. The README starts with `media/screenshots/demo.gif` (33 s, 1.6 MB): recorded by Claude desktop with `screencapture -v` in a throwaway project, cut and sped up with ffmpeg; the raw video is `~/Movies/ai-baton-demo.mov`.
 6. Next session (user's plan): the MCP server for agents without hooks (STATUS To do 2).
 
 ## How we work (user's preferences)
