@@ -470,6 +470,8 @@ test('Ask for review needs an initialized project and an installed reviewer', as
   let failed = 0;
   for (const { name, fn } of tests) {
     const h = new Harness();
+    // The same on every runner: Linux unless a test picks another system.
+    Object.defineProperty(process, 'platform', { value: 'linux' });
     try {
       await fn(h);
       console.log(`ok   ${name}`);
