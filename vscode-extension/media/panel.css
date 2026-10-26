@@ -1,0 +1,174 @@
+/* Sidebar panel. Layout follows the VS Code theme; only chart series have their own colors. */
+:root {
+  --gap: 10px;
+  --radius: 4px;
+  --muted: var(--vscode-descriptionForeground);
+  --border: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  --card: var(--vscode-sideBarSectionHeader-background, rgba(128, 128, 128, 0.08));
+  --series-claude: #eb6834;
+  --series-codex: #2a78d6;
+  --ok: #1baf7a;
+  --warn: #eda100;
+  --bad: #e5484d;
+}
+body.vscode-dark,
+body.vscode-high-contrast {
+  --series-claude: #d95926;
+  --series-codex: #3987e5;
+  --ok: #199e70;
+  --warn: #c98500;
+}
+
+body {
+  padding: 0 12px 16px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-sideBar-background);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  line-height: 1.4;
+}
+
+h2 {
+  margin: 16px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.project { margin: 12px 0 0; font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
+.muted { color: var(--muted); }
+.small { font-size: 11px; }
+.error { color: var(--vscode-errorForeground); margin: 10px 0; }
+
+button {
+  font: inherit;
+  color: var(--vscode-button-secondaryForeground);
+  background: var(--vscode-button-secondaryBackground);
+  border: none;
+  border-radius: 2px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+button.primary { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+button.primary:hover { background: var(--vscode-button-hoverBackground); }
+button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.row + .row { margin-top: 6px; }
+button.link { margin-left: auto; color: var(--muted); background: none; padding: 3px 4px; }
+button.link:hover { color: var(--vscode-foreground); background: none; text-decoration: underline; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+.agent-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.agent-head .name { font-weight: 600; flex: 1; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--border); color: var(--muted); }
+.badge.working { color: var(--ok); border-color: var(--ok); }
+.badge.last { color: var(--vscode-foreground); }
+.model { margin: 2px 0 6px; flex-wrap: nowrap; }
+select {
+  font: inherit;
+  font-size: 11px;
+  min-width: 0;
+  flex: 1;
+  color: var(--vscode-dropdown-foreground);
+  background: var(--vscode-dropdown-background);
+  border: 1px solid var(--vscode-dropdown-border, var(--border));
+  border-radius: 2px;
+  padding: 2px 4px;
+}
+.model select:last-child { flex: 0 0 auto; }
+select:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+.summary {
+  margin: 4px 0 6px;
+  font-size: 11px;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.docs { list-style: none; margin: 0; padding: 0; }
+.docs li { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; }
+.docs a { color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: none; }
+.docs a:hover { text-decoration: underline; }
+
+.tabs { display: flex; gap: 2px; margin-bottom: 8px; }
+.tabs button { flex: 1; }
+.tabs button[aria-pressed='true'] { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.tile { border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 8px; }
+.tile .label { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.tile .value { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tile .sub { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart .axis { fill: var(--muted); font-size: 9px; }
+.chart .grid { stroke: var(--border); stroke-width: 1; }
+.chart rect.bar { stroke: var(--vscode-sideBar-background); stroke-width: 1; }
+.chart rect.hit { fill: transparent; }
+.chart rect.hit:hover { fill: rgba(128, 128, 128, 0.12); }
+.legend { display: flex; gap: 12px; font-size: 11px; color: var(--muted); margin: 4px 0; }
+.legend span { display: inline-flex; align-items: center; gap: 4px; }
+
+.meter { margin: 6px 0; }
+/* Old readings: dimmed as a whole so they do not read like live numbers. */
+.meter.stale { opacity: 0.5; }
+
+button.fold { all: unset; cursor: pointer; }
+button.fold:focus-visible, .recent button.entry:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+.recent { list-style: none; margin: 0; padding: 0; }
+.recent li { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.recent li:last-child { border-bottom: none; }
+.recent button.entry {
+  all: unset;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  column-gap: 6px;
+  align-items: center;
+  width: 100%;
+  cursor: pointer;
+}
+.recent .who { font-weight: 600; }
+.recent .text { grid-column: 1 / -1; font-size: 11px; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.recent .text.clamp { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent .detail { margin: 4px 0; }
+.row.more { margin-top: 6px; }
+.warning {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 4px 0 6px;
+  padding: 4px 6px;
+  border-left: 2px solid var(--warn);
+  background: rgba(237, 161, 0, 0.08);
+}
+.warning span { flex: 1 1 160px; }
+.meter .top { display: flex; justify-content: space-between; font-size: 11px; }
+.meter .track { height: 6px; border-radius: 3px; background: rgba(128, 128, 128, 0.2); overflow: hidden; margin-top: 3px; }
+.meter .fill { height: 100%; border-radius: 3px; }
+
+#tip {
+  position: fixed;
+  pointer-events: none;
+  display: none;
+  z-index: 10;
+  padding: 5px 8px;
+  font-size: 11px;
+  border-radius: var(--radius);
+  color: var(--vscode-editorHoverWidget-foreground);
+  background: var(--vscode-editorHoverWidget-background);
+  border: 1px solid var(--vscode-editorHoverWidget-border);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

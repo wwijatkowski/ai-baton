@@ -1,0 +1,27 @@
+[
+  {
+    "id": "claude",
+    "label": "Claude",
+    "extension": "anthropic.claude-code",
+    "openCommand": "claude-vscode.sidebar.open",
+    "newCommand": "claude-vscode.newConversation",
+    "hooks": "claude",
+    "usage": "claude",
+    "models": "claude",
+    "usageView": "workbench.view.extension.claude-sessions-sidebar",
+    "sessionUri": "{scheme}://anthropic.claude-code/open?session={session}",
+    "review": "claude"
+  },
+  {
+    "id": "codex",
+    "label": "Codex",
+    "extension": "openai.chatgpt",
+    "openCommand": "chatgpt.openSidebar",
+    "newCommand": "chatgpt.newCodexPanel",
+    "hooks": "codex",
+    "usage": "codex",
+    "models": "codex",
+    "sessionUri": "{scheme}://openai.chatgpt/local/{session}",
+    "review": "codex"
+  }
+]

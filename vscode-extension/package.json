@@ -1,0 +1,80 @@
+{
+  "name": "ai-baton",
+  "displayName": "AI Baton",
+  "description": "A conductor for your AI coding agents: shared memory and handoffs between Claude Code and Codex, second-opinion reviews, usage and plan limits.",
+  "version": "0.3.0",
+  "preview": true,
+  "publisher": "wwijatkowski",
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": { "type": "git", "url": "https://github.com/wwijatkowski/ai-baton.git" },
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["AI", "Chat", "Other"],
+  "keywords": ["claude", "claude code", "codex", "agents", "ai", "handoff", "memory", "code review", "multi-agent"],
+  "icon": "media/icon.png",
+  "galleryBanner": { "color": "#14132e", "theme": "dark" },
+  "homepage": "https://github.com/wwijatkowski/ai-baton#readme",
+  "bugs": { "url": "https://github.com/wwijatkowski/ai-baton/issues" },
+  "main": "./extension.js",
+  "scripts": { "vscode:prepublish": "sh ../scripts/bundle-cli.sh" },
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "aiBaton", "title": "AI Baton", "icon": "media/baton.svg" }
+      ]
+    },
+    "views": {
+      "aiBaton": [
+        { "type": "webview", "id": "aiBaton.panel", "name": "Project" }
+      ]
+    },
+    "commands": [
+      { "command": "aiBaton.switchAgent", "title": "AI Baton: Switch Agent" },
+      { "command": "aiBaton.initProject", "title": "AI Baton: Initialize Project" },
+      { "command": "aiBaton.handoffPrompt", "title": "AI Baton: Copy Handoff Request" },
+      { "command": "aiBaton.addDecision", "title": "AI Baton: Add Decision" },
+      { "command": "aiBaton.openHandoff", "title": "AI Baton: Open Handoff" },
+      { "command": "aiBaton.addAgent", "title": "AI Baton: Add Agent" },
+      { "command": "aiBaton.askForReview", "title": "AI Baton: Ask Another Agent for a Review" },
+      { "command": "aiBaton.showRecent", "title": "AI Baton: Show Recent Work" },
+      { "command": "aiBaton.removeAgent", "title": "AI Baton: Remove Agent" },
+      { "command": "aiBaton.refresh", "title": "AI Baton: Refresh", "icon": "$(refresh)" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "aiBaton.refresh", "when": "view == aiBaton.panel", "group": "navigation" }
+      ]
+    },
+    "keybindings": [
+      { "command": "aiBaton.switchAgent", "key": "ctrl+alt+a", "mac": "cmd+alt+a" }
+    ],
+    "configuration": {
+      "title": "AI Baton",
+      "properties": {
+        "aiBaton.home": {
+          "type": "string",
+          "default": "",
+          "description": "Leave empty to use the CLI that comes with the extension (installed to ~/.ai-baton). Set a folder, e.g. ~/ai-baton, to use a development checkout."
+        },
+        "aiBaton.python": {
+          "type": "string",
+          "default": "python3",
+          "description": "Python interpreter."
+        },
+        "aiBaton.refreshSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 15,
+          "description": "How often to refresh usage, in seconds."
+        },
+        "aiBaton.usageDays": {
+          "type": "number",
+          "default": 14,
+          "minimum": 7,
+          "maximum": 90,
+          "description": "Number of days shown in the usage chart."
+        }
+      }
+    }
+  }
+}

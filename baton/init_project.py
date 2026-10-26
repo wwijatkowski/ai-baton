@@ -1,0 +1,161 @@
+"""`baton init`: set a project up for shared agent memory. Idempotent, never overwrites content."""
+import re
+from datetime import date
+from pathlib import Path
+
+from .project import HOME, MARKER, MEMORY_DIR, agent_binary, baton_command, load_agents, read_json, write_json
+
+TEMPLATES = HOME / 'baton' / 'templates'
+BLOCK_RE = re.compile(r'<!-- BEGIN AI-BATON -->.*?<!-- END AI-BATON -->', re.S)
+EVENTS = ('SessionStart', 'UserPromptSubmit', 'Stop')
+LEGACY = 'agent-memory.py'
+HOOK_FILES = {'claude': '.claude/settings.json', 'codex': '.codex/hooks.json'}
+
+
+class InitError(Exception):
+    pass
+
+
+def template(filename, **values):
+    text = (TEMPLATES / filename).read_text()
+    for key, value in values.items():
+        text = text.replace('{' + key + '}', value)
+    return text
+
+
+def ensure_file(path, content, log):
+    if path.exists():
+        log.append(f'= {path.name} already exists (unchanged)')
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    log.append(f'+ {path}')
+
+
+def ensure_agents_md(root, block, log):
+    path = root / 'AGENTS.md'
+    if not path.exists():
+        return ensure_file(path, template('AGENTS.md', name=root.name, block=block), log)
+    text = path.read_text()
+    new = BLOCK_RE.sub(lambda _: block.strip(), text) if BLOCK_RE.search(text) else text.rstrip() + '\n\n' + block
+    if new != text:
+        path.write_text(new)
+        log.append('~ AGENTS.md: added/refreshed the AI Baton section')
+
+
+def ensure_claude_md(root, log):
+    path = root / 'CLAUDE.md'
+    if not path.exists():
+        return ensure_file(path, template('CLAUDE.md', name=root.name), log)
+    text = path.read_text()
+    if '@AGENTS.md' not in text:
+        path.write_text(text.rstrip() + '\n\nShared project rules:\n@AGENTS.md\n@docs/AGENT_HANDOFF.md\n')
+        log.append('~ CLAUDE.md: added @AGENTS.md import')
+
+
+def check_hook_file(path, replace_legacy):
+    config = read_json(path) if path.exists() else {}
+    if not isinstance(config, dict):
+        raise InitError(f'{path} is not valid JSON; fix it by hand.')
+    groups = config.get('hooks', {}).values()
+    if any(LEGACY in h.get('command', '') for gs in groups for g in gs for h in g.get('hooks', [])) \
+            and not replace_legacy:
+        raise InitError(f'{path} has legacy {LEGACY} hooks. Run with --replace-legacy to replace them.')
+    return config
+
+
+def hook_command(agent, user_level=False):
+    return f'{baton_command()} hook {agent}' + (' --global' if user_level else '')
+
+
+def is_baton_hook(command):
+    return LEGACY in command or ('baton' in command and ' hook ' in command)
+
+
+def merge_hooks(root, agent, replace_legacy, log, user_level=False):
+    """Replace AI Baton's hooks in `root`'s hook file for `agent`; user_level means `root` is the home folder."""
+    path = root / HOOK_FILES[agent]
+    config = check_hook_file(path, replace_legacy)
+    hooks = config.setdefault('hooks', {})
+    for event in list(hooks):
+        groups = []
+        for group in hooks[event]:
+            kept = [h for h in group.get('hooks', [])
+                    if not is_baton_hook(h.get('command', ''))]
+            if kept:
+                groups.append({**group, 'hooks': kept})
+        hooks[event] = groups
+    for event in EVENTS:
+        hooks.setdefault(event, []).append(
+            {'hooks': [{'type': 'command', 'command': hook_command(agent, user_level), 'timeout': 10}]})
+    write_json(path, config)
+    log.append(f'~ {"~/" if user_level else ""}{HOOK_FILES[agent]}: memory hooks {", ".join(EVENTS)}')
+
+
+def baton_events(base, agent):
+    """Events that have an AI Baton hook in `base`'s hook file for `agent`."""
+    config = read_json(base / HOOK_FILES[agent], {}) if (base / HOOK_FILES[agent]).exists() else {}
+    hooks = (config.get('hooks') or {}) if isinstance(config, dict) else {}
+    return {event for event, groups in hooks.items()
+            if any(is_baton_hook(h.get('command', '')) for g in groups for h in g.get('hooks', []))}
+
+
+def has_baton_hooks(base, agent):
+    """All of SessionStart, UserPromptSubmit and Stop are hooked; a partial set does not count."""
+    return set(EVENTS) <= baton_events(base, agent)
+
+
+def user_home():
+    return Path.home()
+
+
+def install_user_hooks(only=None):
+    """Install the hooks once for every project (they do nothing outside initialized projects)."""
+    log = []
+    for agent in [a for a in load_agents() if a.get('hooks') in HOOK_FILES and (only is None or a['id'] in only)
+                  and (only is not None or agent_binary(a['hooks']))]:
+        merge_hooks(user_home(), agent['hooks'], False, log, user_level=True)
+    return log
+
+
+def ensure_gitignore(root, log):
+    path = root / '.gitignore'
+    lines = path.read_text().splitlines() if path.exists() else []
+    if not any(l.strip().rstrip('/') == MEMORY_DIR for l in lines):
+        path.write_text('\n'.join(lines + [f'{MEMORY_DIR}/']).lstrip('\n') + '\n')
+        log.append(f'~ .gitignore: {MEMORY_DIR}/')
+
+
+def init(root, replace_legacy=False, only=None):
+    """Set up `root`. `only` limits memory hooks to these agent ids (the ones the user actually has)."""
+    root = Path(root).expanduser().resolve()
+    if not root.is_dir():
+        raise InitError(f'Folder {root} does not exist.')
+    log, today = [], date.today().isoformat()
+    agents = [a for a in load_agents(root) if a.get('hooks') in HOOK_FILES and (only is None or a['id'] in only)]
+    # Unless agents are named, only those whose program is on this computer get hooks: no `.codex/` for Claude-only users.
+    if only is None:
+        for agent in [a for a in agents if not agent_binary(a['hooks'])]:
+            log.append(f'= {agent["id"]}: not found on this computer, so no memory hooks (install it, then run init again)')
+        agents = [a for a in agents if agent_binary(a['hooks'])]
+    # Agents with user-level hooks need nothing in the project (and the repo stays free of local paths).
+    agents = [a for a in agents if not has_baton_hooks(user_home(), a['hooks'])]
+
+    # Validate every hook file before touching anything.
+    for agent in agents:
+        check_hook_file(root / HOOK_FILES[agent['hooks']], replace_legacy)
+
+    marker = root / MARKER
+    if not marker.exists():
+        write_json(marker, {'name': root.name, 'created': today, 'extraAgents': []})
+        log.append(f'+ {marker}')
+    block = (TEMPLATES / 'agents_block.md').read_text()
+    ensure_agents_md(root, block, log)
+    ensure_claude_md(root, log)
+    ensure_file(root / 'docs' / 'AGENT_HANDOFF.md', template('AGENT_HANDOFF.md', date=today), log)
+    ensure_file(root / 'docs' / 'STATUS.md', template('STATUS.md'), log)
+    ensure_file(root / 'docs' / 'knowledge' / 'DECISIONS.md', template('DECISIONS.md', date=today), log)
+    for agent in agents:
+        merge_hooks(root, agent['hooks'], replace_legacy, log)
+    ensure_gitignore(root, log)
+    return log

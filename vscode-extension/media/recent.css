@@ -1,0 +1,27 @@
+/* Recent work editor tab; shares tokens and controls with panel.css. */
+body { background: var(--vscode-editor-background); padding: 8px 24px 32px; max-width: 900px; }
+h1 { font-size: 18px; font-weight: 600; margin: 12px 0; }
+h1 .small { font-weight: 400; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; position: sticky; top: 0; padding: 6px 0; background: var(--vscode-editor-background); }
+.toolbar .tabs { margin: 0; flex: none; }
+.toolbar .tabs button { flex: none; }
+input[type='search'] {
+  flex: 1;
+  min-width: 160px;
+  font: inherit;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--border));
+  border-radius: 2px;
+  padding: 3px 6px;
+}
+input[type='search']:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+h2 { text-transform: none; letter-spacing: 0; font-size: 12px; margin-top: 20px; }
+.sessions { list-style: none; margin: 0; padding: 0; }
+.session { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.session button.entry { all: unset; display: flex; gap: 8px; align-items: center; cursor: pointer; width: 100%; }
+.session button.entry:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+.session .who { font-weight: 600; }
+.session .text { margin: 4px 0 6px 16px; color: var(--vscode-foreground); white-space: pre-wrap; overflow-wrap: anywhere; }
+.session .text.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; color: var(--muted); }
+.session .row { margin-left: 16px; }
