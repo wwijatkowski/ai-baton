@@ -6,12 +6,12 @@ const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
 
-async function poll(read, ms) {
+async function poll(read, ms, describe) {
   const deadline = Date.now() + ms;
   for (;;) {
     const value = read();
     if (value) return value;
-    if (Date.now() > deadline) throw new Error('timed out waiting for the extension');
+    if (Date.now() > deadline) throw new Error(`timed out waiting for the extension: ${describe()}`);
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 }
@@ -23,7 +23,7 @@ exports.run = async function run() {
   const state = await poll(() => {
     const current = api.state();
     return (current.status || current.error) && current;
-  }, 90000);
+  }, 90000, () => JSON.stringify(api.state()));
   assert.strictEqual(state.error, null, `the panel shows an error: ${state.error}`);
 
   // The bundled CLI was installed into the (throwaway) home folder, and the extension ran it for this project.

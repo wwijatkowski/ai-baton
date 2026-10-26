@@ -1,6 +1,6 @@
 // Runs suite.js inside a real VS Code (downloaded by @vscode/test-electron) with the extension from this checkout, a
 // throwaway home folder (so the bundled CLI installs there) and a project that already has a Claude checkpoint.
-// Needs the CLI bundled first (sh scripts/bundle-cli.sh) and `npm install --prefix tests/vscode @vscode/test-electron`.
+// Needs the CLI bundled first (sh scripts/bundle-cli.sh) and `npm install --prefix tests/vscode @vscode/test-electron@3.1.0` (Node 22+).
 // Run: node tests/vscode/run.js  (on Linux without a display: xvfb-run -a node tests/vscode/run.js)
 const cp = require('child_process');
 const fs = require('fs');
