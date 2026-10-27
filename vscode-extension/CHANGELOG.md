@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Agents without hooks (Copilot, Cline, Continue, Gemini and other MCP clients) can share AI Baton's memory through its local MCP server, `baton mcp --agent <id>`: tools `baton_context`, `baton_checkpoint` and `baton_recall`. Their checkpoints show up in Recent work and reach Claude and Codex.
+- The context a new chat gets stays within its size budget however many agents saved checkpoints: the newest come first, older ones arrive with the next prompt.
+
 ## 0.4.2 (preview)
 
 - A new chat gets the agent's own latest checkpoint from its other conversations, not only other agents' checkpoints: one agent alone carries its work into the next chat, and parallel chats see each other's progress.

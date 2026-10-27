@@ -91,6 +91,15 @@ def main():
     check([s for s in seen('codex').values() if s.get('codex') == codex_at],
           f"Codex's new conversation got Codex's earlier checkpoint: {seen('codex')}")
 
+    # `baton mcp` (memory for agents without hooks): Claude Code, as a real MCP client, starts it and connects.
+    run = subprocess.run([claude, 'mcp', 'add', '--scope', 'user', 'baton', '--', sys.executable,
+                          str(ROOT / 'bin' / 'baton'), 'mcp', '--agent', 'copilot'], cwd=project, env=env,
+                         capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120)
+    check(run.returncode == 0, f'claude mcp add: {run.stdout}{run.stderr}')
+    run = subprocess.run([claude, 'mcp', 'list'], cwd=project, env=env, capture_output=True, text=True,
+                         encoding='utf-8', errors='replace', stdin=subprocess.DEVNULL, timeout=120)
+    check('Connected' in run.stdout and 'Failed' not in run.stdout, f'claude mcp list: {run.stdout}{run.stderr}')
+
     # Each prompt hook marked its conversation as working.
     activity = json.loads((mem / 'activity.json').read_text(encoding='utf-8'))
     for name in ('claude', 'codex'):

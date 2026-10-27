@@ -3,7 +3,7 @@ import argparse
 import json
 import sys
 
-from . import hook, hookcheck, init_project, models, project, recall, review, status, usage
+from . import hook, hookcheck, init_project, mcp, models, project, recall, review, status, usage
 
 
 def fmt(n):
@@ -91,6 +91,9 @@ def main(argv=None):
     p.add_argument('--effort', help='reviewer effort for this review only, e.g. low or high')
     p.add_argument('--path', default='.')
     p.add_argument('--json', action='store_true')
+    p = sub.add_parser('mcp', help='MCP server (stdio) with AI Baton memory for agents without hooks')
+    p.add_argument('--agent', required=True, help='the agent this server serves, e.g. copilot or gemini')
+    p.add_argument('--project', help='serve only this project (default: the project path each tool call names)')
     p = sub.add_parser('usage', help='token usage and limits')
     p.add_argument('--days', type=int, default=30)
     p.add_argument('--project')
@@ -196,6 +199,13 @@ def main(argv=None):
             sys.exit(f'Error: {error}')
         print(json.dumps(result, ensure_ascii=False) if args.json
               else f'Review by {reviewer_name(result)} of {result["reviewed"]}:\n\n{result["review"]}')
+    elif args.command == 'mcp':
+        try:
+            mcp.serve(args.agent, args.project)
+        except ValueError as error:
+            sys.exit(f'Error: {error}')
+        except KeyboardInterrupt:
+            pass
     elif args.command == 'usage':
         report = usage.summarize(args.days, args.project)
         print(json.dumps(report, ensure_ascii=False) if args.json else '', end='')
