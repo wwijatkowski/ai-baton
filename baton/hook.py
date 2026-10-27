@@ -448,7 +448,8 @@ def save_copilot_reply(mem, root, transcript, session_id, deadline):
         if not found or copilot_saved(mem, session_id) == found['message_id']:
             return
         captured = capture_changes(mem, root, 'copilot', now_iso(), deadline - COPILOT_PERSIST_RESERVE)
-        with file_lock(mem / '.copilot-stop.lock', timeout=lock_time(deadline)):
+        # The whole budget too: another chat's save (checkpoint, history, receipt) may hold it.
+        with file_lock(mem / '.copilot-stop.lock', timeout=lock_time(deadline, usual=COPILOT_STOP_BUDGET)):
             save_checkpoint(mem, root, 'copilot', {'session_id': session_id, 'last_assistant_message': found['reply']},
                             client=found['client'], extra={'message_id': found['message_id']}, deadline=deadline,
                             found=captured)

@@ -902,6 +902,20 @@ class CopilotHooksTest(unittest.TestCase):
             # Retries stopped at the capture's deadline (0.3 s in), not after the usual 20 tries (about 1 s).
             self.assertLess(refused[-1] - started, 0.6, held)
             self.assertLess(len(refused), 15, held)
+            self.assertLess(time.monotonic() - started, 2.1, held)  # The whole Stop within its budget.
+        # The checkpoint itself held open: the Stop fails within its budget and leaves no receipt (the next one saves).
+        path = self.transcript('c', copilot_events('x', ('final_answer', 'Done c.', 'm-c'), session='c'))
+
+        def refuse_checkpoint(src, dst, *args, **kwargs):
+            if Path(dst).name == 'copilot.json':
+                raise PermissionError('in use')
+            return real(src, dst, *args, **kwargs)
+        started = time.monotonic()
+        with mock.patch.object(project, 'WINDOWS', True), mock.patch.object(hook, 'COPILOT_STOP_BUDGET', 1.6), \
+                mock.patch.object(project.os, 'replace', refuse_checkpoint), self.assertRaises(PermissionError):
+            self.stop('c', path)
+        self.assertLess(time.monotonic() - started, 2.1)
+        self.assertIsNone(hook.copilot_saved(self.project / '.agent-memory', 'c'))
 
     def test_a_stop_that_dies_before_its_receipt_saves_again(self):
         path = self.transcript('s', copilot_events('x', ('final_answer', 'Done.', 'm1'), session='s'))
@@ -924,27 +938,46 @@ class CopilotHooksTest(unittest.TestCase):
                 break
         paths = {sid: self.transcript(sid, copilot_events(sid, ('final_answer', f'Answer {sid}.', f'm{sid}'), session=sid))
                  for sid in ids}
-        real = hook.changes.capture
+        self.assertEqual(len(ids), 2)
+        self.stalled(hook.changes, 'capture', ids, paths)
+
+    def test_a_slow_save_of_one_chat_does_not_drop_another_chats_reply(self):
+        ids = ['p', 'q']
+        self.assertNotEqual(hook.stop_lock(Path('m'), 'p'), hook.stop_lock(Path('m'), 'q'))  # Different chat locks.
+        paths = {sid: self.transcript(sid, copilot_events(sid, ('final_answer', f'Answer {sid}.', f'm{sid}'), session=sid))
+                 for sid in ids}
+        self.stalled(hook, 'save_checkpoint', ids, paths)  # Under the lock every chat shares.
+
+    def stalled(self, owner, name, ids, paths):
+        """Two Stops at once, the first held 3.5 s (longer than the usual lock wait) in owner.name: both replies
+        are saved, each Stop within its budget."""
+        import threading
+        real, calls, errors, took = getattr(owner, name), [], [], {}
 
         def slow(*args, **kwargs):
-            time.sleep(3.5)  # Longer than the usual lock wait.
+            calls.append(1)
+            if len(calls) == 1:
+                time.sleep(3.5)
             return real(*args, **kwargs)
-        errors = []
 
         def stop(sid):
+            started = time.monotonic()
             try:
                 self.stop(sid, paths[sid])
             except Exception as error:  # noqa: BLE001 (reported below)
                 errors.append(error)
-        with mock.patch.object(hook.changes, 'capture', slow):
+            took[sid] = time.monotonic() - started
+        with mock.patch.object(owner, name, slow):
             threads = [threading.Thread(target=stop, args=(sid,)) for sid in ids]
             for thread in threads:
                 thread.start()
+                time.sleep(0.2)  # The first one goes first.
             for thread in threads:
                 thread.join()
         self.assertEqual(errors, [])
         history = (self.project / '.agent-memory' / 'history.jsonl').read_text()
         self.assertTrue(all(f'Answer {sid}.' in history for sid in ids), ids)
+        self.assertTrue(all(t < hook.COPILOT_STOP_BUDGET + 1 for t in took.values()), took)
 
     def test_stop_keeps_its_budget_while_a_lock_is_held(self):
         path = self.transcript('s', copilot_events('x', ('final_answer', 'Done.', 'm1'), session='s'))
