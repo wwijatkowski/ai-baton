@@ -16,7 +16,7 @@ CLAUDE_PROJECTS = Path.home() / '.claude' / 'projects'
 # Session ids of `baton review` runs by Claude: their transcripts stay (usage counts their tokens) but are not the
 # user's own conversations, so they never set the last used model.
 REVIEW_SESSIONS = Path.home() / '.cache' / 'ai-baton' / 'review-sessions.json'
-MAX_REVIEW_SESSIONS = 50
+MAX_REVIEW_SESSIONS = 200
 CLAUDE_MODELS = [('opus', 'Opus'), ('sonnet', 'Sonnet'), ('haiku', 'Haiku')]
 CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh']
 CODEX_CONFIG = Path.home() / '.codex' / 'config.toml'

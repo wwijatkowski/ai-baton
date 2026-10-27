@@ -64,10 +64,12 @@ def redact(text):
 
 
 def parse_time(value):
+    """An aware datetime, or None. Accepts a trailing Z (Copilot's timestamps), which Python before 3.11 does not."""
     try:
-        return datetime.fromisoformat(value)
-    except (TypeError, ValueError):
+        found = datetime.fromisoformat(value[:-1] + '+00:00' if value.endswith('Z') else value)
+    except (TypeError, ValueError, AttributeError):
         return None
+    return found if found.tzinfo else found.replace(tzinfo=timezone.utc)
 
 
 def summarize(reply):
@@ -133,15 +135,19 @@ def busy_warning(mem, agent, session_id):
 KEPT_ACTIVITY = ('hook',)  # Facts about a conversation that outlive its state changes.
 
 
-def set_activity(mem, agent, state, session_id, transcript=None, **facts):
+def set_activity(mem, agent, state, session_id, transcript=None, unless_after=None, **facts):
     """Record this conversation's state; two conversations of one agent no longer overwrite each other. Each agent
     also keeps an agent-level summary (the older format). Locked: hooks of parallel sessions would lose updates.
-    `facts` (KEPT_ACTIVITY) stay with the conversation until changed: hook=True once its own hook ran (Copilot)."""
+    `facts` (KEPT_ACTIVITY) stay with the conversation until changed: hook=True once its own hook ran (Copilot).
+    `unless_after` (an ISO time): leave a conversation alone that started working after it."""
     path = mem / 'activity.json'
     with file_lock(mem / '.activity.lock'):
         activity = read_json(path, {}) or {}
         sessions = agent_sessions(activity.get(agent))
         previous = sessions.get(str(session_id or '')) or {}
+        since, started = parse_time(unless_after), parse_time(previous.get('at'))
+        if since and started and previous.get('state') == 'working' and started > since:
+            return
         entry = {'state': state, 'at': now_iso(), 'session_id': session_id,
                  **{k: previous[k] for k in KEPT_ACTIVITY if k in previous},
                  **{k: v for k, v in facts.items() if k in KEPT_ACTIVITY}}
@@ -407,7 +413,8 @@ def run_copilot(mem, root, event, session_id, payload):
                 receipts.pop(str(session_id or ''), None)
                 receipts[str(session_id or '')] = found['message_id']
                 write_json(mem / COPILOT_RECEIPTS, dict(list(receipts.items())[-MAX_RECEIPTS:]), private=True)
-        set_activity(mem, 'copilot', 'idle', session_id, hook=True)
+        # A late Stop must not end a turn that started after it fired.
+        set_activity(mem, 'copilot', 'idle', session_id, hook=True, unless_after=payload.get('timestamp'))
     return {}
 
 
@@ -434,7 +441,8 @@ def copilot_reply(transcript, session_id=None):
             first = stream.readline(65536)
             size = stream.seek(0, os.SEEK_END)
             stream.seek(max(0, size - COPILOT_TAIL))
-            lines = stream.read().decode('utf-8', 'replace').split('\n')
+            # Exactly up to the size seen: Copilot may still be appending.
+            lines = stream.read(min(size, COPILOT_TAIL)).decode('utf-8', 'replace').split('\n')
     except OSError:
         return None
     try:
@@ -463,12 +471,13 @@ def copilot_reply(transcript, session_id=None):
     turn = events[starts[-1] + 1:]
     if any(e is None or not isinstance(e.get('type'), str) for e in turn):
         return None
-    finals = [e.get('data') for e in turn if e['type'] == 'assistant.message']
-    if not all(isinstance(d, dict) for d in finals):
+    replies = [e.get('data') for e in turn if e['type'] == 'assistant.message']
+    if not all(isinstance(d, dict) for d in replies):
         return None
-    finals = [d for d in finals if d.get('phase') == 'final_answer' and isinstance(d.get('content'), str)
-              and d['content'].strip() and isinstance(d.get('messageId'), str) and d['messageId']]
-    if not finals:
+    finals = [d for d in replies if d.get('phase') == 'final_answer']
+    # The newest final answer or nothing: a damaged one must not let an older one stand in for it.
+    if not finals or not (isinstance(finals[-1].get('content'), str) and finals[-1]['content'].strip()
+                          and isinstance(finals[-1].get('messageId'), str) and finals[-1]['messageId']):
         return None
     producer = header['data'].get('producer')
     client = producer[:40] if isinstance(producer, str) and producer else 'copilot'

@@ -618,8 +618,9 @@ class CopilotHooksTest(unittest.TestCase):
         return str(path)
 
     def stop(self, session, path):
-        return hook.run('copilot', payload(self.project, 'Stop', session, transcript_path=path,
-                                           timestamp='2026-10-27T20:12:21.362Z', stop_reason='end_turn'), user_level=True)
+        now = datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')  # Copilot's form.
+        return hook.run('copilot', payload(self.project, 'Stop', session, transcript_path=path, timestamp=now,
+                                           stop_reason='end_turn'), user_level=True)
 
     def test_install_status_and_uninstall(self):
         self.assertEqual([a.get('hooks') for a in project.load_agents() if a['id'] == 'copilot'], ['copilot'])
@@ -695,6 +696,8 @@ class CopilotHooksTest(unittest.TestCase):
             'damaged line inside the turn': ''.join(good[:3] + ['{"type": "assistant.mes\n'] + good[3:]),
             'damaged last record': ''.join(good) + '{"type": "user.mess\n',  # Complete (newline-ended), so not still being written.
             'header of another conversation': copilot_events('x', done, session='other'),
+            'newer final without content': copilot_events('x', done, ('final_answer', None, 'm2'), session='s'),
+            'newer final without messageId': copilot_events('x', done, ('final_answer', 'Later.', None), session='s'),
         }
         for name, text in cases.items():
             self.assertIsNone(hook.copilot_reply(self.transcript('s', text), 's'), name)
@@ -775,6 +778,50 @@ class CopilotHooksTest(unittest.TestCase):
         for thread in threads:
             thread.join()
         self.assertEqual(history(), base + 1)
+
+    def test_a_stop_waiting_for_the_lock_reads_the_newest_reply(self):
+        # The first Stop is held before the lock while a second one saves a newer reply; released, it must not put
+        # the older reply back (it reads the transcript inside the lock).
+        import threading
+        path = self.transcript('R', copilot_events('r', ('final_answer', 'Old R.', 'mR1'), session='R'))
+        real_lock, held, go = hook.file_lock, threading.Event(), threading.Event()
+
+        def gated(lock):
+            if threading.current_thread().name == 'first':
+                held.set()
+                go.wait(10)
+            return real_lock(lock)
+
+        errors = []
+
+        def first():
+            try:
+                self.stop('R', path)
+            except Exception as error:  # Reported below: a failing thread must fail the test.
+                errors.append(error)
+
+        with mock.patch.object(hook, 'file_lock', gated):
+            worker = threading.Thread(target=first, name='first')
+            worker.start()
+            self.assertTrue(held.wait(10))
+            Path(path).write_text(copilot_events('r', ('final_answer', 'Old R.', 'mR1'), session='R') +
+                                  copilot_events('r2', ('final_answer', 'New R.', 'mR2'), session='R').split('\n', 1)[1])
+            self.stop('R', path)
+            go.set()
+            worker.join(10)
+        self.assertEqual(errors, [])
+        self.assertEqual(read_json(self.project / '.agent-memory' / 'copilot.json')['last_reply'], 'New R.')
+        self.assertEqual((self.project / '.agent-memory' / 'history.jsonl').read_text().count('"message_id": "mR2"'), 1)
+
+    def test_a_late_stop_leaves_the_next_turn_working(self):
+        path = self.transcript('W', copilot_events('w', ('commentary', 'Still going.', 'm1'), session='W'))
+        hook.run('copilot', payload(self.project, 'UserPromptSubmit', 'W', timestamp='t'), user_level=True)
+        state = lambda: read_json(self.project / '.agent-memory' / 'activity.json')['copilot']['sessions']['W']['state']
+        hook.run('copilot', payload(self.project, 'Stop', 'W', transcript_path=path, timestamp='2020-01-01T00:00:00.000Z'),
+                 user_level=True)  # Fired before this turn started.
+        self.assertEqual(state(), 'working')
+        self.stop('W', path)  # Fired now, after the turn started.
+        self.assertEqual(state(), 'idle')
 
     def test_odd_hook_files_and_uninstall_without_the_agent(self):
         init_project.copilot_hook_file().parent.mkdir(parents=True)
