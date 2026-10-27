@@ -53,7 +53,8 @@ def main():
         return (json.loads((mem / 'seen.json').read_text(encoding='utf-8')) if (mem / 'seen.json').exists() else {}).get(by, {})
 
     def checkpoint(name, text):
-        baton('hook', name, payload=json.dumps({'cwd': str(project), 'hook_event_name': 'Stop',
+        # transcript_path: Claude always sends it (hook.foreign_call ignores Claude hooks run by other agents).
+        baton('hook', name, payload=json.dumps({'cwd': str(project), 'hook_event_name': 'Stop', 'transcript_path': '',
                                                 'session_id': f'seed-{name}', 'last_assistant_message': text}))
         return json.loads((mem / f'{name}.json').read_text(encoding='utf-8'))['saved_at']
 

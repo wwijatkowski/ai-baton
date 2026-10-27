@@ -2,7 +2,7 @@
 
 A short, current state of the work for the next agent. Replace outdated content; do not keep history here (that is what Git and `docs/knowledge/` are for).
 
-**Last updated:** 2026-10-27, Claude
+**Last updated:** 2026-10-27 (evening), Claude
 
 ## Current state
 AI Baton 0.4.2 (preview) is PUBLISHED on the VS Code Marketplace and Open VSX (`wwijatkowski.ai-baton`, 2026-10-27; every release since v0.4.0 is published by `release.yml` from its version tag, with a GitHub release holding the .vsix). The repo `github.com/wwijatkowski/ai-baton` is public.
@@ -14,8 +14,9 @@ AI Baton 0.4.2 (preview) is PUBLISHED on the VS Code Marketplace and Open VSX (`
 
 ## Recently done (2026-10-27)
 - Released 0.4.2: own checkpoints across conversations; review with any agent, model and effort (PR #7, #8; UI test round 7 passed).
-- Branch `mcp-server` (unreleased): `baton mcp --agent ID [--project PATH]` in `baton/mcp.py`, a stdlib stdio MCP server (dual-era: `initialize` for legacy clients, `_meta` + `server/discover` for 2026-07-28) with `baton_context` (returns a session_id), `baton_checkpoint` (requires it) and `baton_recall`. Hooks read every valid `<agent>.json` (`hook.checkpoint_file`) and keep a total context budget (`hook.fit_budget`). AGENTS.md rule 5 tells hook-less agents to use the tools. `baton install-mcp --agent copilot` / `uninstall-mcp` (`baton/mcp_install.py`, VS Code's user mcp.json, only our "ai-baton" entry, refuses JSON with comments) and Connect memory on the panel card (status field `mcp`); Add agent now offers the built-in Copilot Chat.
-- Live: Copilot Free (VS Code 1.143, Agent mode) called baton_context and baton_checkpoint through the installed entry; the checkpoint has client `copilot-cli` and reached Claude's SessionStart hook. The user's mcp.json still has the entry (it points at this checkout; after the release, Connect memory rewrites it to ~/.ai-baton).
+- Branch `mcp-server` (unreleased): `baton mcp --agent ID [--project PATH]` in `baton/mcp.py`, a stdlib stdio MCP server (dual-era: `initialize` for legacy clients, `_meta` + `server/discover` for 2026-07-28) with `baton_context` (returns a session_id), `baton_checkpoint` (requires it) and `baton_recall`. Hooks read every valid `<agent>.json` (`hook.checkpoint_file`) and keep a total context budget (`hook.fit_budget`). AGENTS.md rule 5 tells hook-less agents to use the tools. Copilot gets the server through VS Code's MCP provider API (`registerMcp` in `extension.js`, provider id `aiBaton.memory`, positional `McpStdioServerDefinition` as VS Code 1.143 implements it): Connect memory / Disconnect on its card, stored in globalState `aiBaton.mcpAgent`, nothing written to the user's mcp.json. Add agent offers the built-in Copilot Chat. `hook.foreign_call` ignores Claude hook files run by Copilot (no transcript_path, or a timestamp).
+- Live (UI test round 8, Claude desktop): Copilot Free in agent mode called baton_context and baton_recall by itself, saved a checkpoint (client `copilot-cli`), the card and Recent work showed it, Disconnect removed the tools. It trusted a template handoff over a newer checkpoint: the context notice and the baton_context description now say checkpoints can be newer and to call it first. Round 9: it called baton_context first, reported the newer checkpoint and called the handoff outdated; it did not save a checkpoint by itself after creating a file (only when asked), so the baton_checkpoint description and baton_context's result now ask it to save before ending a turn with changes (not re-tested).
+- Reported from a real Windows setup: after Claude ran `cd` into a sibling repo, hooks saw that repo as cwd and stopped saving. `hook.project_root` now uses CLAUDE_PROJECT_DIR (session start folder, set for user-level hooks too; checked with the real CLI) before the payload cwd.
 - Verified: 68 unit tests (`tests/test_mcp.py` drives the server like a client: answers read while stdin is open, Unicode, malformed input, EOF, interleaved chats, two projects, a restart, review runs writing nothing, damaged checkpoints, the hard budget). Codex reviewed the diff (gpt-6.1-sol, xhigh); all 8 points applied, 25 extension flows, `tests/e2e_hooks.py` (Claude Code connects to `baton mcp` as a real MCP client, no tokens), and a real `claude -p --model haiku` run with user settings off (no AI Baton hooks) that called both tools: it read Codex's checkpoint through `baton_context` and its checkpoint was saved with client `claude-code`.
 
 ## Next steps (in this order)
@@ -27,7 +28,7 @@ Releasing (no stored tokens, see 1): bump the version and add a CHANGELOG sectio
 2. Optional: a manual look at the VS Code panel on Windows. CI covers the CLIs, hooks and the extension host, not the rendered webview.
 3. Publisher display name (waiting for VSMarketplace@microsoft.com). The user does not want promotional posts for now.
 4. Listing (0.4.1, released): display name "AI Baton: Claude Code & Codex memory, handoff, review" for Marketplace search (it weighs the name most; the id stays, so it can go back to "AI Baton" any time), wider keywords, Cursor/Windsurf via Open VSX in the description. The README starts with `media/screenshots/demo.gif` (33 s, 1.6 MB): recorded by Claude desktop with `screencapture -v` in a throwaway project, cut and sped up with ffmpeg; the raw video is `~/Movies/ai-baton-demo.mov`.
-5. Merge the `mcp-server` PR and release 0.5.0 (CHANGELOG Unreleased). Then: Copilot's native hooks (STATUS To do 2), other agents' MCP configs.
+5. Merge the `mcp-server` PR and release 0.5.0. Then stage B: Copilot's native sessionStart hook (STATUS To do 2), after capturing a real Copilot hook payload.
 
 ## How we work (user's preferences)
 - Reply in Polish; docs in English. Ask before outward or destructive actions (pushes to other repos, history rewrites, deleting memory).

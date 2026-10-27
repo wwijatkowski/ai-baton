@@ -489,3 +489,133 @@ Tester: Claude desktop (computer use, click-only in VS Code; the user pressed En
 - `~/.ai-baton/versions/0.4.1` now holds the CLI bundled in the test .vsix (copied with the user's approval); it is what the installer would have put there for a new version.
 - `~/baton-test-review`: deleted after the test, together with its VS Code window (the Untitled review tab closed without saving). Its Claude transcripts remain in `~/.claude/projects/-Users-wiktorwijatkowski-baton-test-review/` (Claude's own data, not removed).
 - The only file in this repo edited by the tester is this report. Nothing committed.
+
+# Round 8: Connect memory for GitHub Copilot (2026-10-27)
+
+Tester: Claude desktop (computer use, click-only in VS Code; the user typed the three Copilot messages). Extension `wwijatkowski.ai-baton` 0.5.0 from a .vsix; `~/.ai-baton/current-version` = 0.5.0 after the window activated it. Project: `~/baton-test-mcp` (no git, shadow repo, initialized, seeded Codex checkpoint "Codex chose the codename BLUE-LYNX for this project. Next: write the parser."). The window opened in Restricted Mode; the tester trusted the folder (Manage → Trust).
+
+## Summary
+
+| # | Check | Result |
+|---|-------|--------|
+| A1 | Add agent lists Copilot (GitHub.copilot-chat) | PASS |
+| A2 | Copilot card: "No memory hooks…" box with Connect memory | PASS |
+| A3 | Connect memory: notification and "Memory tools on…" with Disconnect | PASS |
+| B1–B2 | New Copilot chat in Agent mode, question sent | PASS (after one mix-up, see details) |
+| B3 | Tool approval prompts | PASS (texts below) |
+| B4 | Copilot calls baton_context by itself and mentions BLUE-LYNX and the parser | PARTIAL: called it by itself, mentioned the parser, not BLUE-LYNX |
+| B5–B6 | baton_checkpoint called, confirmed, `copilot.json` written | PASS |
+| B7 | Card "Checkpoint just now", Copilot in Recent work | PASS |
+| C1 | Disconnect brings back the Connect memory box | PASS |
+| C2 | New chat: Copilot no longer has baton_context | PASS |
+
+## Details
+
+**A1 PASS.** "Add which installed agent?": "Copilot GitHub.copilot-chat", "Codex History Viewer - Codex and Claude Code hiztam.codex-history-viewer" ("Codex History Viewer - Codex and Claude Code: detected from its Marketplace category"), "Find AI agents in the Marketplace…". After picking Copilot: notification "Copilot added. It has no memory hooks: use Connect memory on it…".
+
+**A2 PASS.** Card "Copilot · No checkpoint" with the box "No memory hooks, so this agent does not share memory yet." and **Connect memory**.
+
+**A3 PASS.** Notification "Copilot now has AI Baton's memory tools in agent mode, in every workspace. It calls them itself: at the start of a chat to load the shared context, after its work to save a checkpoint. If a chat does not use them, ask it to call baton_context." (full text from `extension.js`; the toast showed its start). Card: "Memory tools on: the agent calls them in agent mode." and **Disconnect**. Nothing was written to the user `mcp.json`: the server comes from the extension's MCP provider.
+
+**B1–B2 PASS.** The first attempt went to the Copilot chat of the ai-baton window (the user's other window; the tester did not touch it), the second did not arrive at all; the third, after the tester clicked into the chat input of the test window, worked. The chat ran in Agent mode, "Auto routed task to gpt-6-luna".
+
+**B3 PASS.** Each AI Baton tool asked once: "Allow tool from AI Baton?" / "AI Baton: baton_context" with **Allow in this Session** (with a dropdown) and **Skip**; the same for "AI Baton: baton_recall" and "AI Baton: baton_checkpoint". The tester chose Allow in this Session each time. No separate prompt to start or trust the MCP server.
+
+**B4 PARTIAL.** Copilot used the tools by itself, but not first: it read `AGENT_HANDOFF.md` and `STATUS.md`, ran `git status --short --branch` (failed: "fatal: not a git repository (or any of the parent directories): .git"), searched tools, then called **baton_context**; afterwards it read `AGENTS.md`, ran `pwd; ls -la …; git -C … status` (failed the same way) and called **baton_recall**. Its answer (Polish) put the template handoff first: the project is in initial setup and the next step is filling in "About the project" in AGENTS.md. On the Codex checkpoint it said: "Jest też starszy checkpoint Codexa z notatką „write the parser”, ale nie podaje kontekstu i nie zgadza się z aktualnym handoffem, więc traktowałbym go jako niepotwierdzoną wskazówkę." **BLUE-LYNX was not mentioned.** So the memory reached Copilot, but it trusted the fresh template handoff over the checkpoint. Not tested: whether a follow-up "Call baton_context" would have changed that (not needed, since it had called the tool).
+
+**B5–B6 PASS.** "Zapisz checkpoint: przeczytałeś kontekst projektu, niczego nie zmieniałeś." → prompt for baton_checkpoint → reply "Checkpoint zapisany. Przeczytałem kontekst projektu i niczego nie zmieniałem." `~/baton-test-mcp/.agent-memory/copilot.json`:
+- `agent`: "copilot"
+- `session_id`: "copilot-df07ff5cbadb"
+- `client`: "copilot-cli"
+- `summary`: "Read the project's AI Baton context, handoff, status, AGENTS.md, README, and historical checkpoint. No files were changed. The handoff says the next step is to fill in the About the project section in AGENTS.md; project purpose/stack remain unspecified. Git status could not be checked because the directory is not a Git repository."
+- `saved_at` 2026-10-27T13:31:14Z, `changes` shadow @ 816a6ff, 0 changed, `handoff_updated` false.
+
+**B7 PASS.** After Refresh the Copilot card showed "Checkpoint just now", the "last" badge and the summary; Recent work (2) listed Copilot ("Read the project's AI Baton context, handoff, stat…", just now) above Codex.
+
+**C1 PASS.** **Disconnect** brought back "No memory hooks, so this agent does not share memory yet." with Connect memory.
+
+**C2 PASS.** New chat (Agent mode, "Auto routed task to mai-code-1.1-flash"), "Call baton_context for this project." Copilot searched tools, found none, and asked "Run in terminal?" for `which baton_context >/dev/null 2>&1 && baton_context /Users/wiktorwijatkowski/baton-test-mcp || echo 'baton_context not found'`. The tester clicked Skip. Final reply: "I'm unable to call baton_context because the user explicitly denied permission for that tool call." (It means the skipped shell command; the MCP tool was gone.)
+
+## Other observations (round 8)
+
+1. **B4 is the important finding:** with a fresh template handoff, Copilot ranks the handoff above a newer agent checkpoint and calls the checkpoint "unconfirmed", dropping its main fact (BLUE-LYNX). It also reads files and tries git before calling baton_context. The tool description or the context text could say that checkpoints are newer than a template handoff and should be reported.
+2. The checkpoint's `client` is "copilot-cli", though this was Copilot Chat in VS Code (whatever the MCP clientInfo says).
+3. After **Remove**, Recent work shows the old entry as "copilot" (lower-case id, no label/colour), since the agent is no longer registered.
+4. The workspace's MCP server log `mcpServer.wwijatkowski.ai-batonAI Baton.log` stayed empty, so tool results can only be seen in the chat.
+
+## State left behind (round 8)
+
+- Copilot: disconnected (C1) and removed from AI Baton's agents (Remove → "Remove Copilot from AI Baton? The extension stays installed." → Remove). `~/.config/ai-baton/agents.json` is `{"agents": [], "hidden": []}`.
+- `~/baton-test-mcp`: its VS Code window closed and the folder deleted (see below). Copilot's chat history for that workspace stays in VS Code's storage.
+- The ai-baton window was not touched (one test message landed in its Copilot chat by mistake; the user sent it).
+- The only file in this repo edited by the tester is this report. Nothing committed.
+
+# Round 9: Connect memory for Copilot after the "checkpoints can be newer" fix (2026-10-27)
+
+Tester: Claude desktop (computer use, click-only in VS Code; the user typed the four Copilot messages after the tester clicked into the test window's chat input, and every message arrived in the right window). Extension `wwijatkowski.ai-baton` 0.5.0; the CLI in `~/.ai-baton/versions/0.5.0` matched the repo's `baton/` (no diff). Project: `~/baton-test-mcp` (no git, shadow repo, template handoff "Project set up. No work yet.", seeded Codex checkpoint "Codex chose the codename RED-HERON for this project. Next: write the CSV parser in parser.py."). The folder was already trusted.
+
+## Summary
+
+| # | Check | Result |
+|---|-------|--------|
+| P2 | Add agent → Copilot | PASS |
+| P3 | Connect memory: notification and card text | PASS |
+| A3 | Tool approval prompts | PASS |
+| A4a | baton_context before reading files or running git | PASS |
+| A4b | Answer names RED-HERON and the CSV parser | PASS |
+| A4c | Says the handoff is outdated and the checkpoint is newer | PASS |
+| B1–B2 | parser.py created | PASS |
+| B3 | Copilot saves a checkpoint by itself after the work | FAIL |
+| B4 | Saves it when asked; `copilot.json` correct | PASS |
+| B5 | Card and Recent work show the checkpoint after Refresh | PASS |
+| C1 | Disconnect brings back Connect memory | PASS |
+| C2 | New chat: no baton_context tool | PASS |
+
+## Details
+
+**P2 PASS.** "Add which installed agent?" listed "Copilot GitHub.copilot-chat" first; after picking it: "Copilot added. It has no memory hooks: use Connect memory on its card if it shows one; otherwise, when you open it, AI Baton copies a context request for you to paste."
+
+**P3 PASS.** Notification: "Copilot can now use AI Baton's memory tools in agent mode, in every workspace. It decides when to call them: the instructions ask it to load the shared context when a chat starts and to save a checkpoint after its work. If a chat skips them, ask it to call baton_context or baton_checkpoint." (full text from `extension.js`; the toast showed its start). Card: "Memory tools on: it decides when to call them (agent mode)." and **Disconnect**.
+
+**A3 PASS.** "Allow tool from AI Baton?" / "AI Baton: baton_context" with **Allow in this Session** and **Skip**; later the same for "AI Baton: baton_recall" and "AI Baton: baton_checkpoint". Copilot also asked "Run in terminal?" for `git status --short --branch && printf '\nTop-level files:\n' && ls -la` (read-only; the tester allowed it for the session).
+
+**A4a PASS.** Order: Copilot's own "Search Tools" step, then the baton_context approval prompt appeared while only that step had finished, before any file read. After it: Read `AGENT_HANDOFF.md`, `STATUS.md`, `AGENTS.md`; the git command (failed: "fatal: not a git repository (or any of the parent directories): .git"); `pwd; ls -la …; find … -maxdepth 2 …; git -C … status --short --branch` (same failure); then baton_recall ("Checking checkpoint details"). "Completed 7 steps in 32s", model "Auto routed task to gpt-6-luna". `seen.json` confirms the call (session `copilot-1eb0b913a8cb`). In round 8 it read the handoff and ran git first.
+
+**A4b PASS.** Answer (Polish): "Nowszy checkpoint AI Baton z 27 października mówi, że Codex nadał projektowi nazwę **RED-HERON** i następnym krokiem jest napisanie parsera CSV w `parser.py`."
+
+**A4c PASS.** It then said: "Pliki handoffu są nieaktualne — nadal mówią, że projekt jest tylko po konfiguracji i trzeba uzupełnić sekcję „About the project” w AGENTS.md. W obecnym katalogu nie ma jeszcze `parser.py`; nie udało się też sprawdzić statusu Git, bo katalog nie zawiera repozytorium `.git`." The checkpoint came first and the handoff was called outdated: the opposite of round 8.
+
+**B1–B2 PASS.** "Completed 3 steps in 17s +3 -0" (Considering verification options, Edited parser.py). `parser.py`:
+```python
+def parse_csv(text):
+    return [line.split(",") for line in text.splitlines()]
+```
+Reply: "Utworzyłem parser.py z funkcją parse_csv(text), która dzieli tekst na wiersze, a każdy wiersz na pola po przecinkach. Zgodnie z prośbą nie dodawałem ani nie uruchamiałem testów." No approval was needed for the edit.
+
+**B3 FAIL.** Copilot did not call baton_checkpoint after the work (no approval prompt, no step); `cat ~/baton-test-mcp/.agent-memory/copilot.json` → "brak checkpointu". The instructions ("after significant work") did not make it save after creating a file.
+
+**B4 PASS.** "Zapisz checkpoint." → prompt "AI Baton: baton_checkpoint" → reply "Checkpoint zapisany. Obejmuje utworzenie i odczyt parser.py; testów nie uruchamiałem." `copilot.json`:
+- `agent`: "copilot", `session_id`: "copilot-1eb0b913a8cb" (the same as its baton_context call), `client`: "copilot-cli"
+- `changes`: shadow @ 909a188, `["A parser.py"]`, 1 changed
+- `summary`: "Created parser.py with parse_csv(text), splitting input into lines and comma-separated fields. Verified by reading the file; tests were not requested and were not run. Next step: continue from the CSV parser as needed; project Git status could not be checked because the workspace has no .git directory."
+- `saved_at` 2026-10-27T15:00:50Z, `handoff_updated` false.
+
+**B5 PASS.** After Refresh: Copilot card "Checkpoint just now", the "last" badge and the summary; Recent work (2) "Copilot · just now · Created parser.py with parse_csv(text), splitting i…" above Codex; status bar "Copilot just now".
+
+**C1 PASS.** **Disconnect** brought back "No memory hooks, so this agent does not share memory yet." with Connect memory.
+
+**C2 PASS.** New chat, Agent mode, "Call baton_context for this project." Copilot: "Searching for baton_context", Search Tools, then "Run in terminal?" for `command -v baton_context || command -v baton`; the tester clicked Skip. Reply: "I couldn't call `baton_context`: it wasn't available among the tools exposed in this session. The fallback check for a local Baton CLI was denied, so I stopped there." (Clearer than round 8's "the user explicitly denied permission for that tool call".)
+
+## Other observations (round 9)
+
+1. The fix for round 8's B4 works: baton_context came first, and the checkpoint won over the template handoff with its key fact.
+2. Remaining gap (B3): Copilot does not save a checkpoint on its own after ordinary work. Options: stronger wording in the baton_checkpoint description (e.g. "before you end a turn in which you changed files"), or a reminder in what baton_context returns.
+3. `client` is still "copilot-cli" for Copilot Chat in VS Code (same as round 8).
+4. After Remove, Recent work again shows the entry as lower-case "copilot" (same as round 8).
+
+## State left behind (round 9)
+
+- Copilot: disconnected (C1) and removed from AI Baton's agents (Remove → "Remove Copilot from AI Baton? The extension stays installed." → Remove); `~/.config/ai-baton/agents.json` is `{"agents": [], "hidden": []}`.
+- The `~/baton-test-mcp` window closed (no ghost window this time; only the ai-baton window remains) and the folder deleted. Copilot's chat history for that workspace stays in VS Code's storage.
+- The ai-baton window was not touched.
+- The only file in this repo edited by the tester is this report. Nothing committed.

@@ -14,7 +14,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from baton import hook, init_project, mcp_install, status  # noqa: E402
+from baton import hook, init_project  # noqa: E402
 from baton.project import read_json  # noqa: E402
 
 MODERN = {'io.modelcontextprotocol/protocolVersion': '2026-07-28',
@@ -151,6 +151,7 @@ class McpTest(unittest.TestCase):
         text, failed = c.call('baton_context', project_path=str(self.project))
         self.assertFalse(failed, text)
         self.assertIn('No checkpoint from another agent', text)
+        self.assertNotIn('Stop hook', text, 'an MCP agent must save with baton_checkpoint')
         first = text.rsplit('session_id: ', 1)[1].split()[0]
         second = c.call('baton_context', project_path=str(self.project))[0].rsplit('session_id: ', 1)[1].split()[0]
         self.assertNotEqual(first, second)
@@ -174,9 +175,10 @@ class McpTest(unittest.TestCase):
         self.assertIn('Wrote notes', c.call('baton_context', project_path=str(self.project))[0])
 
         # An agent outside the registry still reaches the hooks of the others, and Recent work.
-        claude = hook.run('claude', {'cwd': str(self.project), 'hook_event_name': 'SessionStart', 'session_id': 'k1'})
+        claude = hook.run('claude', {'cwd': str(self.project), 'hook_event_name': 'SessionStart', 'session_id': 'k1',
+                                     'transcript_path': ''})
         self.assertIn('[copilot]', claude['hookSpecificOutput']['additionalContext'])
-        hook.run('claude', {'cwd': str(self.project), 'hook_event_name': 'Stop', 'session_id': 'k1',
+        hook.run('claude', {'cwd': str(self.project), 'hook_event_name': 'Stop', 'session_id': 'k1', 'transcript_path': '',
                             'last_assistant_message': 'Claude reviewed the notes.'})
         self.assertIn('Claude reviewed the notes', c.call('baton_context', project_path=str(self.project))[0])
 
@@ -258,66 +260,6 @@ class McpTest(unittest.TestCase):
                                  capture_output=True, text=True, input='')
             self.assertNotEqual(run.returncode, 0, bad)
             self.assertIn('invalid agent id', run.stderr)
-
-
-class InstallMcpTest(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.user_dir = Path(self.tmp.name) / 'Code' / 'User'
-        self.patch = mock.patch.object(mcp_install, 'vscode_user_dir', lambda: self.user_dir)
-        self.patch.start()
-        self.file = self.user_dir / 'mcp.json'
-        self.project = Path(self.tmp.name) / 'p'
-        self.project.mkdir()
-        init_project.init(self.project)
-        marker = self.project / '.baton.json'
-        config = read_json(marker)
-        config['extraAgents'] = [{'id': 'copilot', 'label': 'Copilot', 'extension': 'GitHub.copilot-chat',
-                                  'openCommand': 'workbench.action.chat.open'}]
-        marker.write_text(json.dumps(config))
-
-    def tearDown(self):
-        self.patch.stop()
-        self.tmp.cleanup()
-
-    def test_install_keeps_other_servers_and_uninstall_removes_only_ours(self):
-        self.assertEqual(mcp_install.state('copilot', self.project), 'available')
-        self.assertEqual(status.project_status(self.project)['agents'][-1]['mcp'], 'available')
-        self.assertIsNone(status.project_status(self.project)['agents'][0]['mcp'], 'agents with hooks need no MCP')
-        self.user_dir.mkdir(parents=True)
-        self.file.write_text(json.dumps({'servers': {'playwright': {'type': 'stdio', 'command': 'npx'}},
-                                         'inputs': [{'id': 'x'}]}))
-        mcp_install.install('copilot', self.project)
-        mcp_install.install('copilot', self.project)  # Again: still one entry.
-        config = read_json(self.file)
-        self.assertEqual(sorted(config['servers']), ['ai-baton', 'playwright'])
-        self.assertEqual(config['inputs'], [{'id': 'x'}])
-        entry = config['servers']['ai-baton']
-        self.assertEqual((entry['type'], entry['args'][1:]), ('stdio', ['mcp', '--agent', 'copilot']))
-        self.assertTrue(Path(entry['command']).is_absolute() and Path(entry['args'][0]).is_absolute())
-        self.assertEqual(status.project_status(self.project)['agents'][-1]['mcp'], 'installed')
-        # The written command really starts our server.
-        run = subprocess.run([entry['command'], *entry['args']], capture_output=True, timeout=30,
-                             input=b'{"jsonrpc":"2.0","id":1,"method":"ping"}\n')
-        self.assertEqual(json.loads(run.stdout)['result'], {})
-
-        self.assertEqual(len(mcp_install.uninstall(None, self.project)), 1)
-        self.assertEqual(sorted(read_json(self.file)['servers']), ['playwright'])
-        self.assertEqual(mcp_install.uninstall(None, self.project), [])
-
-    def test_refuses_what_it_cannot_safely_change(self):
-        self.user_dir.mkdir(parents=True)
-        self.file.write_text('{\n  // my servers\n  "servers": {}\n}\n')
-        with self.assertRaises(mcp_install.McpInstallError):
-            mcp_install.install('copilot', self.project)
-        self.assertIn('// my servers', self.file.read_text(), 'a file with comments is left as it was')
-        self.file.write_text(json.dumps({'servers': {'ai-baton': {'command': 'something-else'}}}))
-        with self.assertRaises(mcp_install.McpInstallError):
-            mcp_install.install('copilot', self.project)
-        self.assertEqual(mcp_install.uninstall(['copilot'], self.project), [], 'not ours: never removed')
-        with self.assertRaises(mcp_install.McpInstallError) as raised:
-            mcp_install.install('cody', self.project)
-        self.assertIn('"--agent", "cody"', str(raised.exception), 'unsupported agents get the entry to add by hand')
 
 
 class ContextBudgetTest(unittest.TestCase):

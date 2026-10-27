@@ -49,10 +49,20 @@ class Harness {
     this.posted = [];
     this.commands = {};
     this.installed = new Set(REGISTRY.map((a) => a.extension));
-    this.config = { home: CLI_HOME, python: 'python3', refreshSeconds: 3600, usageDays: 14 };
+    this.config = { home: CLI_HOME, python: 'python3', refreshSeconds: 3600, usageDays: 14, memoryTools: '' };
+    this.configListeners = [];
     this.pending = 0;
     this.hung = [];
     this.memento = {};  // The extension's globalState.
+    this.mcpProviders = {};
+    this.allExtensions = [];
+  }
+
+  // A user setting changed (by this window or another one): every window gets the change event.
+  setConfig(key, value) {
+    this.config[key] = value === undefined ? '' : value;
+    const change = { affectsConfiguration: (section) => section === 'aiBaton' || section === `aiBaton.${key}` };
+    this.configListeners.forEach((fn) => fn(change));
   }
 
   // The user's answer to the next dialog of `kind` whose text matches `match` (used once).
@@ -140,6 +150,18 @@ class Harness {
       ProgressLocation: { Notification: 15 },
       ViewColumn: { Beside: -2 },
       QuickPickItemKind: { Separator: -1 },
+      ConfigurationTarget: { Global: 1 },
+      EventEmitter: class {
+        constructor() { this.listeners = []; this.event = (fn) => { this.listeners.push(fn); return { dispose() {} }; }; }
+        fire() { h.mcpFired = (h.mcpFired || 0) + 1; this.listeners.forEach((fn) => fn()); }
+        dispose() {}
+      },
+      // Positional, like VS Code 1.143's implementation.
+      McpStdioServerDefinition: h.noMcpApi ? undefined
+        : class { constructor(label, command, args, env, version) { Object.assign(this, { label, command, args, env, version }); } },
+      lm: h.noMcpApi ? undefined : {
+        registerMcpServerDefinitionProvider: (id, provider) => { h.mcpProviders[id] = provider; return { dispose() {} }; },
+      },
       window: {
         activeTextEditor: undefined,
         tabGroups: { all: [] },
@@ -172,14 +194,14 @@ class Harness {
       workspace: {
         workspaceFolders: [{ uri: uri(ROOT) }],
         getWorkspaceFolder: () => undefined,
-        getConfiguration: () => ({ get: (key) => h.config[key] }),
+        getConfiguration: () => ({ get: (key) => h.config[key], update: async (key, value) => h.setConfig(key, value) }),
         onDidChangeWorkspaceFolders: event(),
-        onDidChangeConfiguration: event(),
+        onDidChangeConfiguration: (fn) => { h.configListeners.push(fn); return { dispose() {} }; },
         createFileSystemWatcher: () => ({ onDidChange() {}, onDidCreate() {}, dispose() {} }),
         openTextDocument: async (options) => { h.documents.push(options); return { uri: uri('/untitled-review'), ...options }; },
       },
       extensions: {
-        all: [],
+        all: h.allExtensions,
         getExtension: (id) => (h.installed.has(id) ? { id } : undefined),
         onDidChange: event(),
       },
@@ -320,24 +342,99 @@ test('switching while another agent works asks first', async (h) => {
   assert.ok(!h.executed.some((c) => c[0] === 'claude-vscode.sidebar.open'), 'dismissed: stays put');
 });
 
-test('Connect memory adds the MCP server; then opening the agent copies no context request', async (h) => {
-  const copilot = { id: 'copilot', label: 'Copilot', extension: 'github.copilot-chat', openCommand: 'workbench.action.chat.open',
-    source: 'user', checkpoint: null, activity: null };
-  let connected = false;
-  h.installed.add('github.copilot-chat');
-  h.cli.status = () => sampleStatus({ agents: [...sampleStatus().agents, { ...copilot, mcp: connected ? 'installed' : 'available' }] });
-  h.cli['install-mcp'] = () => { connected = true; return {}; };
+const COPILOT = { id: 'copilot', label: 'Copilot', extension: 'GitHub.copilot-chat', openCommand: 'workbench.action.chat.open',
+  source: 'user', checkpoint: null, activity: null };
+const withCopilot = (h) => {
+  h.installed.add('GitHub.copilot-chat');
+  h.cli.status = () => sampleStatus({ agents: [...sampleStatus().agents, COPILOT] });
+};
+
+test('Connect memory offers AI Baton\'s MCP server to Copilot; Disconnect withdraws it', async (h) => {
+  withCopilot(h);
   await h.start();
+  const provider = h.mcpProviders['aiBaton.memory'];
+  assert.ok(provider, 'registered under the id package.json contributes');
+  assert.deepStrictEqual(await provider.provideMcpServerDefinitions(), [], 'off until connected');
+  assert.deepStrictEqual(h.lastState().mcp, { agents: ['copilot'], connected: null, available: false }, 'only Copilot can connect');
   await h.panel({ cmd: 'open', agent: 'copilot' });
   assert.match(h.clipboard, /AGENTS\.md/, 'not connected yet: the context request is copied');
+
   h.clipboard = '';
-  await h.panel({ cmd: 'installMcp', agent: 'copilot' });
+  const fired = h.mcpFired;
+  await h.panel({ cmd: 'connectMemory', agent: 'copilot' });
   await h.settle();
-  assert.deepStrictEqual(h.cliArgs('install-mcp')[0], ['install-mcp', '--agent', 'copilot', '--path', ROOT]);
-  assert.ok(h.dialogs.some((d) => d.kind === 'info' && /Copilot can now use AI Baton's memory/.test(d.text)));
+  assert.strictEqual(h.config.memoryTools, 'copilot', 'a user setting, which every window sees');
+  assert.ok(h.mcpFired > fired, 'VS Code is told');
+  const [server] = await provider.provideMcpServerDefinitions();
+  assert.strictEqual(server.label, 'AI Baton');
+  assert.strictEqual(server.command, 'python3');
+  assert.deepStrictEqual(server.args, [path.join(CLI_HOME, 'bin', 'baton'), 'mcp', '--agent', 'copilot']);
+  assert.match(server.version, /^\d+\.\d+\.\d+$/);
+  assert.strictEqual(await provider.resolveMcpServerDefinition(server), server);
+  assert.deepStrictEqual(h.lastState().mcp, { agents: ['copilot'], connected: 'copilot', available: true });
+  assert.ok(h.dialogs.some((d) => d.kind === 'info' && /It decides when to call them/.test(d.text)));
   await h.panel({ cmd: 'open', agent: 'copilot' });
   assert.strictEqual(h.clipboard, '', 'connected: nothing to paste');
-  assert.ok(h.executed.some((c) => c[0] === 'workbench.action.chat.open'));
+
+  // Disconnect in another window: this one hears the setting change, and a definition VS Code still holds won't start.
+  const before = h.mcpFired;
+  h.setConfig('memoryTools', '');
+  assert.ok(h.mcpFired > before);
+  assert.deepStrictEqual(await provider.provideMcpServerDefinitions(), []);
+  assert.strictEqual(await provider.resolveMcpServerDefinition(server), undefined);
+  assert.strictEqual(h.lastState().mcp.connected, null);
+});
+
+test('removing the connected agent also disconnects its memory tools', async (h) => {
+  withCopilot(h);
+  h.config.memoryTools = 'copilot';
+  h.on('warning', /Remove Copilot from AI Baton/, 'Remove');
+  await h.start();
+  assert.strictEqual((await h.mcpProviders['aiBaton.memory'].provideMcpServerDefinitions()).length, 1);
+  await h.panel({ cmd: 'removeAgent', agent: 'copilot' });
+  await h.settle();
+  assert.deepStrictEqual(h.cliArgs('remove-agent')[0], ['remove-agent', 'copilot']);
+  assert.strictEqual(h.config.memoryTools, '');
+  assert.deepStrictEqual(await h.mcpProviders['aiBaton.memory'].provideMcpServerDefinitions(), []);
+});
+
+test('when AI Baton stops working, the memory tools are withdrawn and the context request is back', async (h) => {
+  withCopilot(h);
+  h.config.memoryTools = 'copilot';
+  await h.start();
+  const provider = h.mcpProviders['aiBaton.memory'];
+  const [server] = await provider.provideMcpServerDefinitions();
+  h.pythons = {};  // The Python setting now points at nothing.
+  const before = h.mcpFired;
+  h.setConfig('python', 'python9');
+  await h.settle();
+  assert.ok(h.mcpFired > before, 'VS Code is told when the server can no longer run');
+  assert.deepStrictEqual(await provider.provideMcpServerDefinitions(), []);
+  assert.strictEqual(await provider.resolveMcpServerDefinition(server), undefined);
+  assert.deepStrictEqual(h.lastState().mcp, { agents: ['copilot'], connected: 'copilot', available: false });
+  await h.panel({ cmd: 'open', agent: 'copilot' });
+  assert.match(h.clipboard, /AGENTS\.md/, 'tools unavailable: the context request is copied again');
+});
+
+test('Add agent offers the built-in Copilot Chat, but no other built-in extension', async (h) => {
+  const ext = (id, pkg) => ({ id, packageJSON: { categories: ['AI', 'Chat'], ...pkg } });
+  h.allExtensions.push(ext('GitHub.copilot-chat', { isBuiltin: true, displayName: 'GitHub Copilot Chat' }),
+    ext('vscode.some-ai-thing', { isBuiltin: true, displayName: 'Built-in AI thing',
+      contributes: { viewsContainers: { panel: [{ id: 'thing' }] } } }));
+  let offered;
+  h.on('pick', /Add which installed agent/, (items) => { offered = items.map((i) => i.label); return items[0]; });
+  await h.start();
+  await h.commands['aiBaton.addAgent']();
+  assert.deepStrictEqual(offered.filter((l) => !l.includes('Find AI agents')), ['$(hubot) Copilot']);
+  assert.deepStrictEqual(JSON.parse(h.cliArgs('add-agent')[0][1]), { id: 'copilot', label: 'Copilot',
+    extension: 'GitHub.copilot-chat', openCommand: 'workbench.action.chat.open', newCommand: 'workbench.action.chat.newChat' });
+});
+
+test('without VS Code\'s MCP provider API nothing is offered and activation still works', async (h) => {
+  h.noMcpApi = true;
+  await h.start();
+  assert.strictEqual(h.lastState().mcp, null);
+  assert.strictEqual(h.lastState().error, null);
 });
 
 // ---------- initialize ----------

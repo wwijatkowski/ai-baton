@@ -52,13 +52,13 @@ Then start a new chat in either agent.
 
 Claude Code and Codex share memory through hooks. Other agents that speak MCP (the Model Context Protocol) can use AI Baton's local MCP server: `baton mcp --agent <id>`, started by the agent, over stdio, with no network. It gives the agent three tools: `baton_context` (what the hooks give Claude and Codex at the start of a chat), `baton_checkpoint` (save a summary of the work) and `baton_recall` (search older checkpoints). Its checkpoints show up in Recent work and reach the other agents.
 
-For GitHub Copilot, click **Connect memory** on its card (or run `baton install-mcp --agent copilot`): AI Baton adds the server to VS Code's user `mcp.json`. For other agents, add it to the agent's MCP settings with absolute paths, for example (macOS and Linux; the extension installs the CLI in `~/.ai-baton`):
+For GitHub Copilot, click **Connect memory** on its card: AI Baton offers the server to VS Code itself (no settings file is edited; it works in every workspace and profile, and always runs the current CLI). **Disconnect** turns it off. This needs a VS Code with the MCP provider API; otherwise, and for other agents, add the server to the agent's MCP settings with absolute paths, for example (macOS and Linux; the extension installs the CLI in `~/.ai-baton`):
 
 ```json
 { "command": "python3", "args": ["/Users/you/.ai-baton/bin/baton", "mcp", "--agent", "copilot"] }
 ```
 
-The agent decides when to call the tools: the server and the `AGENTS.md` rules ask it to call `baton_context` when a chat starts and `baton_checkpoint` after significant work. Projects set up before this version get the rule when you run Initialize project again. `--project <folder>` limits the server to one project.
+The agent decides when to call the tools: the server and the `AGENTS.md` rules ask it to call `baton_context` when a chat starts and `baton_checkpoint` after significant work. Use agent mode (Copilot's ask mode has no tools); if a chat skips them, ask it to call `baton_context`. Projects set up before this version get the rule when you run Initialize project again. `--project <folder>` limits the server to one project.
 
 ## What AI Baton stores, reads and writes
 

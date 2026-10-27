@@ -1,9 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 (preview)
 
 - Agents without hooks (Copilot, Cline, Continue, Gemini and other MCP clients) can share AI Baton's memory through its local MCP server, `baton mcp --agent <id>`: tools `baton_context`, `baton_checkpoint` and `baton_recall`. Their checkpoints show up in Recent work and reach Claude and Codex.
-- Connect memory: one click on an agent's card adds the MCP server to its settings (GitHub Copilot in VS Code for now; `baton install-mcp --agent copilot`). Add agent offers Copilot Chat again now that VS Code ships it built in.
+- Connect memory: one click on GitHub Copilot's card gives it these tools, through VS Code's MCP provider API (no settings file is edited); Disconnect turns them off. Add agent offers Copilot Chat again now that VS Code ships it built in.
+- Claude Code keeps saving checkpoints after the agent runs `cd` into another folder (e.g. a sibling repo from `additionalDirectories`): hooks find the project from the folder the session started in. Before, that session saved nothing more and looked busy to other conversations for up to 45 minutes.
+- Claude Code hook files run by another agent (GitHub Copilot in VS Code can read them) no longer count as Claude's turns.
 - The context a new chat gets stays within its size budget however many agents saved checkpoints: the newest come first, older ones arrive with the next prompt.
 
 ## 0.4.2 (preview)
