@@ -607,7 +607,8 @@ class CopilotHooksTest(unittest.TestCase):
                                                          'openCommand': 'workbench.action.chat.open'}]}))
         for patch in (mock.patch.dict(os.environ, {'COPILOT_HOME': str(self.home)}),
                       mock.patch.object(project, 'USER_AGENTS', self.registry),
-                      mock.patch.object(init_project, 'user_home', return_value=base / 'home')):
+                      mock.patch.object(init_project, 'user_home', return_value=base / 'home'),
+                      mock.patch.object(hook, 'COPILOT_REPLY_WAIT', 0)):  # No waiting unless a test asks for it.
             patch.start()
             self.addCleanup(patch.stop)
         os.environ.pop('COPILOT_PROJECT_DIR', None)
@@ -683,6 +684,29 @@ class CopilotHooksTest(unittest.TestCase):
         self.stop('cp1', path)  # The same Stop again: nothing new.
         self.assertEqual((self.project / '.agent-memory' / 'history.jsonl').read_text().splitlines(), history)
         self.assertIn('Fixed the bug in parser.py.', context(hook.run('codex', payload(self.project, 'SessionStart', 'c2'))))
+
+    def test_stop_waits_for_a_reply_written_after_it(self):
+        # Seen live: Copilot runs Stop a few milliseconds before the final answer reaches events.jsonl.
+        import threading
+        first = copilot_events('hi', ('final_answer', 'Hello.', 'm1'), session='late')
+        path = self.transcript('late', first)
+        self.stop('late', path)
+        turn = first + copilot_events('again', ('final_answer', 'Hello again.', 'm2'), session='late').split('\n', 1)[1]
+        Path(path).write_text(turn.rsplit('{"type": "assistant.message"', 1)[0])  # The new turn, its answer not yet.
+        writer = threading.Timer(0.3, lambda: Path(path).write_text(turn))
+        writer.start()
+        self.addCleanup(writer.cancel)
+        with mock.patch.object(hook, 'COPILOT_REPLY_WAIT', 2.0):
+            started = time.monotonic()
+            self.stop('late', path)
+        self.assertEqual(read_json(self.project / '.agent-memory' / 'copilot.json')['last_reply'], 'Hello again.')
+        self.assertLess(time.monotonic() - started, 1.5)  # Returned as soon as the answer was there.
+        with mock.patch.object(hook, 'COPILOT_REPLY_WAIT', 0.3):
+            started = time.monotonic()
+            self.stop('late', path)  # Nothing new: gives up after the wait, saves nothing twice.
+        self.assertGreaterEqual(time.monotonic() - started, 0.3)
+        self.assertEqual(sum('"copilot"' in line for line in
+                             (self.project / '.agent-memory' / 'history.jsonl').read_text().splitlines()), 2)
 
     def test_unsure_transcripts_save_nothing(self):
         done = ('final_answer', 'Done.', 'm1')

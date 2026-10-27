@@ -17,6 +17,7 @@ import gzip
 import json
 import os
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,6 +40,9 @@ COPILOT_TAIL = 512 * 1024  # Bytes of a Copilot transcript read at Stop: the cur
 # Conversation -> messageId of the last reply saved from its transcript. A dot name: no agent can be called that.
 COPILOT_RECEIPTS = '.copilot-stops.json'
 MAX_RECEIPTS = 500
+# Copilot runs Stop before its last events reach the file (seen live: the final answer lands milliseconds later), so
+# Stop waits this long for a reply it has not saved yet. Bounded, and well inside the hook's 10 s.
+COPILOT_REPLY_WAIT = 2.0
 HANDOFF_DOC = 'docs/AGENT_HANDOFF.md'
 HANDOFF_RE = re.compile(r'(?im)^[ \t#*_>]*handoff[ \t*_]*:?[ \t*_]*$')
 
@@ -400,6 +404,7 @@ def run_copilot(mem, root, event, session_id, payload):
         changes.baseline(root, mem)
         set_activity(mem, 'copilot', 'working', session_id, hook=True)
     elif event == 'Stop':
+        wait_for_copilot_reply(mem, payload.get('transcript_path'), session_id)
         # Locked, the transcript read inside: a Stop that is late or seen twice finds the newest reply already saved.
         # Receipts per conversation live apart from activity.json, which forgets older conversations.
         with file_lock(mem / '.copilot-stop.lock'):
@@ -416,6 +421,19 @@ def run_copilot(mem, root, event, session_id, payload):
         # A late Stop must not end a turn that started after it fired.
         set_activity(mem, 'copilot', 'idle', session_id, hook=True, unless_after=payload.get('timestamp'))
     return {}
+
+
+def wait_for_copilot_reply(mem, transcript, session_id):
+    """Returns once the transcript holds a final answer not yet saved for this conversation, or after
+    COPILOT_REPLY_WAIT. Outside the lock: the caller reads again under it."""
+    deadline = time.monotonic() + COPILOT_REPLY_WAIT
+    while True:
+        found = copilot_reply(transcript, session_id)
+        receipts = read_json(mem / COPILOT_RECEIPTS, {}) or {}
+        saved = receipts.get(str(session_id or '')) if isinstance(receipts, dict) else None
+        if (found and found['message_id'] != saved) or time.monotonic() >= deadline:
+            return
+        time.sleep(0.1)
 
 
 def hook_ran(mem, agent, session_id):
