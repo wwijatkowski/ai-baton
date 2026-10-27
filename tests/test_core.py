@@ -21,6 +21,8 @@ from baton.project import read_json  # noqa: E402
 project.USER_AGENTS = Path(tempfile.gettempdir()) / 'ai-baton-tests-none' / 'agents.json'
 # Nor the real user-level hooks (with them installed, init would skip project hooks).
 init_project.user_home = lambda: Path(tempfile.gettempdir()) / 'ai-baton-tests-none' / 'home'
+# Nor the real list of review sessions (Claude reviews record theirs).
+models.REVIEW_SESSIONS = Path(tempfile.gettempdir()) / f'ai-baton-tests-reviews-{os.getpid()}.json'
 # Nor which agents happen to be installed here: tests assume both are.
 init_project.agent_binary = lambda kind: f'/usr/bin/{kind}'
 
@@ -575,6 +577,216 @@ class MemoryTiersTest(unittest.TestCase):
         self.assertIn('payments', recall.render(hits[0], ['payments'], False))
 
 
+def copilot_events(user_text, *replies, partial=False, session='cp1'):
+    """A Copilot events.jsonl as the runtime writes it (observed 2026-10-27, copilot-agent 1.0.100): `replies` are
+    (phase, content, messageId) after the user's message."""
+    events = [{'type': 'session.start', 'data': {'sessionId': session, 'producer': 'copilot-agent'}},
+              {'type': 'user.message', 'data': {'content': user_text}},
+              {'type': 'assistant.turn_start', 'data': {'turnId': '0'}}]
+    events += [{'type': 'assistant.message', 'data': {'phase': phase, 'content': content, 'messageId': mid}}
+               for phase, content, mid in replies]
+    events.append({'type': 'assistant.turn_end', 'data': {'turnId': '0'}})
+    text = ''.join(json.dumps(e) + '\n' for e in events)
+    return text + ('{"type": "assistant.mess' if partial else '')
+
+
+class CopilotHooksTest(unittest.TestCase):
+    """Copilot's own hooks (~/.copilot/hooks/ai-baton.json): context at SessionStart, the reply read at Stop."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.project = base / 'demo'
+        self.project.mkdir()
+        init_project.init(self.project)
+        self.home = base / 'copilot-home'
+        self.registry = base / 'agents.json'
+        self.registry.write_text(json.dumps({'agents': [{'id': 'copilot', 'label': 'Copilot', 'extension': 'GitHub.copilot-chat',
+                                                         'openCommand': 'workbench.action.chat.open'}]}))
+        for patch in (mock.patch.dict(os.environ, {'COPILOT_HOME': str(self.home)}),
+                      mock.patch.object(project, 'USER_AGENTS', self.registry),
+                      mock.patch.object(init_project, 'user_home', return_value=base / 'home')):
+            patch.start()
+            self.addCleanup(patch.stop)
+        os.environ.pop('COPILOT_PROJECT_DIR', None)
+
+    def transcript(self, session, text):
+        path = self.home / 'session-state' / session / 'events.jsonl'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return str(path)
+
+    def stop(self, session, path):
+        return hook.run('copilot', payload(self.project, 'Stop', session, transcript_path=path,
+                                           timestamp='2026-10-27T20:12:21.362Z', stop_reason='end_turn'), user_level=True)
+
+    def test_install_status_and_uninstall(self):
+        self.assertEqual([a.get('hooks') for a in project.load_agents() if a['id'] == 'copilot'], ['copilot'])
+        self.assertEqual(hookcheck.status(self.project)['copilot']['state'], 'missing')
+        init_project.install_user_hooks(None)  # Not named: Copilot has no CLI to detect, so it is left out.
+        self.assertFalse(init_project.copilot_hook_file().exists())
+        log = init_project.install_user_hooks({'copilot'})
+        config = json.loads(init_project.copilot_hook_file().read_text())
+        self.assertEqual(config['version'], 1)
+        self.assertEqual(sorted(config['hooks']), sorted(init_project.EVENTS))
+        entry = config['hooks']['Stop'][0]
+        self.assertTrue(entry['command'].endswith(' hook copilot --global'), entry)
+        self.assertEqual(entry['timeoutSec'], 10)
+        self.assertIn('ai-baton.json', log[0])
+        self.assertEqual(hookcheck.status(self.project)['copilot'], {'state': 'ok', 'detail': 'installed (user)'})
+        self.assertEqual(hookcheck.user_status()['copilot']['state'], 'ok')
+        self.assertFalse((self.project / '.github').exists())  # Never in a project.
+        init_project.uninstall_hooks({'copilot'})
+        self.assertFalse(init_project.copilot_hook_file().exists())
+        self.assertTrue(init_project.copilot_hook_file().parent.exists())  # Copilot's folder stays.
+
+    def test_only_the_real_copilot_entry_gets_hooks(self):
+        self.registry.write_text(json.dumps({'agents': [
+            {'id': 'copilot', 'label': 'Copilot', 'extension': 'someone.else', 'openCommand': 'x'},
+            {'id': 'other', 'label': 'Other', 'extension': 'github.copilot-chat', 'openCommand': 'x'}]}))
+        self.assertFalse([a for a in project.load_agents() if a.get('hooks') == 'copilot'])
+        self.registry.write_text(json.dumps({'agents': []}))
+        marker = self.project / project.MARKER
+        data = json.loads(marker.read_text())
+        data['extraAgents'] = [{'id': 'copilot', 'label': 'C', 'extension': 'github.copilot-chat', 'openCommand': 'x'}]
+        marker.write_text(json.dumps(data))
+        self.assertFalse([a for a in project.load_agents(self.project) if a.get('hooks') == 'copilot'])  # Not from a repo.
+
+    def test_context_at_session_start_and_reply_saved_at_stop(self):
+        hook.run('codex', payload(self.project, 'Stop', 'c1', last_assistant_message='Codex fixed the parser.'))
+        start = hook.run('copilot', payload(self.project, 'SessionStart', 'cp1', timestamp='t', source='new'), user_level=True)
+        self.assertEqual(list(start), ['additionalContext'])  # The Copilot runtime's documented output.
+        self.assertIn('Codex fixed the parser.', start['additionalContext'])
+        self.assertIn('Your AI Baton session_id: cp1', start['additionalContext'])
+        self.assertIn('saved by AI Baton', start['additionalContext'])
+        # Copilot drops this output: it only marks the turn, it must not mark checkpoints as seen.
+        seen = (self.project / '.agent-memory' / 'seen.json').read_text()
+        hook.run('codex', payload(self.project, 'Stop', 'c1', last_assistant_message='Codex added tests.'))
+        self.assertEqual(hook.run('copilot', payload(self.project, 'UserPromptSubmit', 'cp1', timestamp='t'), user_level=True), {})
+        self.assertEqual((self.project / '.agent-memory' / 'seen.json').read_text(), seen)
+        activity = read_json(self.project / '.agent-memory' / 'activity.json')
+        self.assertEqual(activity['copilot']['sessions']['cp1']['state'], 'working')
+        again = hook.run('copilot', payload(self.project, 'SessionStart', 'cp1', timestamp='t'), user_level=True)
+        self.assertIn('Codex added tests.', again['additionalContext'])  # SessionStart always delivers everything.
+
+        path = self.transcript('cp1', copilot_events('fix it', ('commentary', 'Looking at the code.', 'm1'),
+                                                     ('final_answer', 'Fixed the bug in parser.py.', 'm2'), partial=True))
+        self.assertEqual(self.stop('cp1', path), {})
+        snap = read_json(self.project / '.agent-memory' / 'copilot.json')
+        self.assertEqual((snap['last_reply'], snap['message_id'], snap['client'], snap['session_id']),
+                         ('Fixed the bug in parser.py.', 'm2', 'copilot-agent', 'cp1'))
+        self.assertEqual(read_json(self.project / '.agent-memory' / 'activity.json')['copilot']['sessions']['cp1']['state'], 'idle')
+        history = (self.project / '.agent-memory' / 'history.jsonl').read_text().splitlines()
+        self.stop('cp1', path)  # The same Stop again: nothing new.
+        self.assertEqual((self.project / '.agent-memory' / 'history.jsonl').read_text().splitlines(), history)
+        self.assertIn('Fixed the bug in parser.py.', context(hook.run('codex', payload(self.project, 'SessionStart', 'c2'))))
+
+    def test_unsure_transcripts_save_nothing(self):
+        done = ('final_answer', 'Done.', 'm1')
+        lines = lambda text: text.splitlines(keepends=True)
+        good = lines(copilot_events('x', ('commentary', 'Working.', 'm0'), done, session='s'))
+        bad_user = json.dumps({'type': 'user.message', 'data': None}) + '\n'
+        cases = {
+            'commentary only': copilot_events('x', ('commentary', 'Working on it.', 'm1'), session='s'),
+            'no user message in it': ''.join(good[:1] + good[3:]),
+            'not JSON': 'garbage\n',
+            'damaged current user message': ''.join(good + [bad_user] + good[3:]),
+            'damaged line inside the turn': ''.join(good[:3] + ['{"type": "assistant.mes\n'] + good[3:]),
+            'damaged last record': ''.join(good) + '{"type": "user.mess\n',  # Complete (newline-ended), so not still being written.
+            'header of another conversation': copilot_events('x', done, session='other'),
+        }
+        for name, text in cases.items():
+            self.assertIsNone(hook.copilot_reply(self.transcript('s', text), 's'), name)
+            self.assertEqual(self.stop('s', self.transcript('s', text)), {}, name)
+        outside = Path(self.tmp.name) / 'events.jsonl'
+        outside.write_text(copilot_events('x', ('final_answer', 'Done.', 'm1')))
+        self.stop('s-out', str(outside))
+        self.assertIsNone(hook.copilot_reply(str(outside)))
+        if not WINDOWS:
+            link = self.home / 'session-state' / 'link' / 'events.jsonl'
+            link.parent.mkdir(parents=True)
+            link.symlink_to(outside)
+            self.assertIsNone(hook.copilot_reply(str(link)))  # Resolves outside Copilot's folder.
+        self.assertFalse((self.project / '.agent-memory' / 'copilot.json').exists())
+        # A turn with a final answer later still saves.
+        self.stop('s-ok', self.transcript('s-ok', copilot_events('x', ('final_answer', 'Done.', 'm9'), session='s-ok')))
+        self.assertEqual(read_json(self.project / '.agent-memory' / 'copilot.json')['last_reply'], 'Done.')
+
+    def test_long_transcript_reads_only_the_end(self):
+        old = copilot_events('old', ('final_answer', 'Old answer.', 'm0'))
+        filler = json.dumps({'type': 'session.usage_record', 'data': {'pad': 'x' * 1000}}) + '\n'
+        text = old + filler * (hook.COPILOT_TAIL // len(filler) + 5) + copilot_events('new', ('final_answer', 'New answer.', 'm1'))
+        self.assertEqual(hook.copilot_reply(self.transcript('long', text), 'cp1')['reply'], 'New answer.')
+        # The turn's user message fell out of the tail: unsure, so nothing.
+        text = copilot_events('new', ('commentary', 'x', 'm0')).rsplit('\n', 2)[0] + '\n' + filler * (hook.COPILOT_TAIL // len(filler) + 5)
+        text += json.dumps({'type': 'assistant.message', 'data': {'phase': 'final_answer', 'content': 'Late.', 'messageId': 'm5'}}) + '\n'
+        self.assertIsNone(hook.copilot_reply(self.transcript('long2', text), 'cp1'))
+
+    def test_project_folder_from_copilot(self):
+        other = Path(self.tmp.name) / 'sibling'
+        other.mkdir()
+        with mock.patch.dict(os.environ, {'COPILOT_PROJECT_DIR': str(self.project)}):
+            start = hook.run('copilot', payload(other, 'SessionStart', 'cp1', timestamp='t'), user_level=True)
+        self.assertIn('AI Baton', start['additionalContext'])
+
+    def test_memory_tools_defer_to_hooks_that_ran(self):
+        from baton import mcp
+        server = mcp.Server('copilot')
+        init_project.install_user_hooks({'copilot'})
+        # Installed is not proof: a chat without the hook's session_id is asked to save.
+        self.assertIn('call baton_checkpoint with it', server.baton_context({'project_path': str(self.project)}))
+        self.assertIn('call baton_checkpoint with it', server.baton_context({'project_path': str(self.project), 'session_id': 'cp1'}))
+        hook.run('copilot', payload(self.project, 'UserPromptSubmit', 'cp1', timestamp='t'), user_level=True)
+        text = server.baton_context({'project_path': str(self.project), 'session_id': 'cp1'})
+        self.assertNotIn('call baton_checkpoint with it', text)
+        self.assertIn('saved by AI Baton', text)
+        # Its own checkpoint through the tool keeps the hook mark.
+        server.baton_checkpoint({'project_path': str(self.project), 'session_id': 'cp1', 'summary': 'Saved by hand.'})
+        self.assertTrue(hook.hook_ran(self.project / '.agent-memory', 'copilot', 'cp1'))
+
+    def test_a_stop_saves_once_per_reply_in_each_conversation(self):
+        a = self.transcript('A', copilot_events('a', ('final_answer', 'Answer A.', 'mA'), session='A'))
+        b = self.transcript('B', copilot_events('b', ('final_answer', 'Answer B.', 'mB'), session='B'))
+        history = lambda: (self.project / '.agent-memory' / 'history.jsonl').read_text().count('"agent": "copilot"')
+        self.stop('A', a)
+        self.stop('B', b)
+        self.stop('A', a)  # A late repeat of A's Stop must not put A's old answer over B's.
+        self.assertEqual(history(), 2)
+        self.assertEqual(read_json(self.project / '.agent-memory' / 'copilot.json')['last_reply'], 'Answer B.')
+        for n in range(hook.MAX_SESSIONS + 2):  # Activity forgets older conversations; the receipts do not.
+            self.stop(f'x{n}', self.transcript(f'x{n}', copilot_events('x', ('final_answer', f'X{n}.', f'mx{n}'), session=f'x{n}')))
+        self.stop('A', a)
+        self.assertEqual(history(), 2 + hook.MAX_SESSIONS + 2)
+        # A late Stop reads the transcript as it is now, inside the lock: it never saves an older reply over a newer one.
+        late = self.transcript('L', copilot_events('l', ('final_answer', 'Old L.', 'mL1'), session='L'))
+        self.stop('L', late)
+        Path(late).write_text(copilot_events('l', ('final_answer', 'Old L.', 'mL1'), session='L') +
+                              copilot_events('l2', ('final_answer', 'New L.', 'mL2'), session='L').split('\n', 1)[1])
+        self.stop('L', late)
+        self.stop('L', late)
+        self.assertEqual(read_json(self.project / '.agent-memory' / 'copilot.json')['last_reply'], 'New L.')
+        base = history()
+        import threading
+        c = self.transcript('C', copilot_events('c', ('final_answer', 'Answer C.', 'mC'), session='C'))
+        threads = [threading.Thread(target=self.stop, args=('C', c)) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(history(), base + 1)
+
+    def test_odd_hook_files_and_uninstall_without_the_agent(self):
+        init_project.copilot_hook_file().parent.mkdir(parents=True)
+        for text in ('{"hooks": ["unexpected"]}', '[]', '{"version": 2, "hooks": {}}', 'not json'):
+            init_project.copilot_hook_file().write_text(text)
+            self.assertEqual(hookcheck.status(self.project)['copilot']['state'], 'missing', text)
+        init_project.install_user_hooks({'copilot'})
+        self.registry.write_text(json.dumps({'agents': []}))  # Copilot removed from the panel.
+        self.assertTrue(init_project.uninstall_hooks({'copilot'}))
+        self.assertFalse(init_project.copilot_hook_file().exists())
+
+
 class ModelsTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -638,6 +850,22 @@ class ModelsTest(unittest.TestCase):
         log.write_text('{"message":{"model":"claude-opus-5-5"}}\n')
         with mock.patch.object(models, 'CLAUDE_PROJECTS', log.parents[1]):
             self.assertEqual(models.claude()['defaultLabel'], 'last used: Opus 5.5')
+            # A newer transcript from a `baton review` run does not count; its tokens still do (usage reads it).
+            with mock.patch.object(models, 'REVIEW_SESSIONS', Path(self.tmp.name) / 'reviews.json'):
+                review_log = log.parent / '0f8e7c1a-3b2d-4e5f-8a9b-0c1d2e3f4a5b.jsonl'
+                review_log.write_text('{"message":{"model":"claude-haiku-5-5"}}\n')
+                os.utime(review_log, (time.time() + 60, time.time() + 60))
+                self.assertEqual(models.claude()['defaultLabel'], 'last used: Haiku 5.5')
+                models.add_review_session(review_log.stem)
+                self.assertEqual(models.claude()['defaultLabel'], 'last used: Opus 5.5')
+                import threading
+                ids = [f'r{n}' for n in range(8)]
+                threads = [threading.Thread(target=models.add_review_session, args=(i,)) for i in ids]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
+                self.assertTrue(set(ids) <= set(models.review_sessions()))  # None lost to a parallel review.
 
     def test_rejects_bad_values_and_broken_files(self):
         with self.assertRaises(models.ModelError):
@@ -776,7 +1004,7 @@ class ReviewTest(unittest.TestCase):
         claude = review.review(self.project, 'claude')['review']
         # Read-only by construction, and flagged so the reviewer's own hooks stay out of shared memory.
         self.assertIn('--tools Read,Grep,Glob', claude)
-        self.assertIn('--no-session-persistence', claude)  # Not the user's conversation, nor their last model.
+        self.assertRegex(claude, r'--session-id [0-9a-f-]{36}')  # Recorded, so it never sets the last used model.
         self.assertIn('--sandbox read-only', result['review'])
         self.assertIn('env: 1', claude)
         self.assertIn('env: 1', result['review'])
@@ -1310,17 +1538,35 @@ class CliInstallTest(unittest.TestCase):
         self.assertEqual(self.run_node(f'console.log(JSON.stringify(installCli("/nonexistent", {json.dumps(str(target))})))'), 'null')
 
     @unittest.skipIf(WINDOWS or not shutil.which('sh'), 'bundle-cli.sh is a POSIX shell script')
-    def test_bundle_writes_a_stable_build_hash(self):
-        # bundle-cli.sh writes into vscode-extension/cli (gitignored), as `vsce package` does.
-        cli = ROOT / 'vscode-extension' / 'cli'
-        bundle = lambda: subprocess.run(['sh', str(ROOT / 'scripts' / 'bundle-cli.sh')], capture_output=True, text=True)
-        self.assertEqual(bundle().returncode, 0)
-        build = (cli / 'BUILD').read_text().strip()
-        self.assertRegex(build, r'^[0-9a-f]{12}$')
-        (ROOT / 'baton' / '__pycache__').mkdir(exist_ok=True)  # Caches are left out of the bundle and the hash.
-        self.assertEqual(bundle().returncode, 0)
-        self.assertEqual((cli / 'BUILD').read_text().strip(), build)
-        self.assertFalse(list(cli.rglob('__pycache__')))
+    def test_bundle_build_hash_follows_the_files(self):
+        # A copy of the repo layout bundle-cli.sh expects, so the real vscode-extension/cli is never touched.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        repo = Path(tmp.name) / 'repo'
+        (repo / 'scripts').mkdir(parents=True)
+        shutil.copy(ROOT / 'scripts' / 'bundle-cli.sh', repo / 'scripts')
+        (repo / 'baton' / '__pycache__').mkdir(parents=True)
+        (repo / 'baton' / 'cli.py').write_text('print(1)\n')
+        (repo / 'bin').mkdir()
+        (repo / 'bin' / 'baton').write_text('launcher\n')
+        (repo / 'vscode-extension').mkdir()
+        (repo / 'vscode-extension' / 'package.json').write_text('{"version": "0.9.0"}')
+
+        def build():
+            run = subprocess.run(['sh', str(repo / 'scripts' / 'bundle-cli.sh')], capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            return (repo / 'vscode-extension' / 'cli' / 'BUILD').read_text().strip()
+
+        first = build()
+        self.assertRegex(first, r'^[0-9a-f]{12}$')
+        (repo / 'baton' / '__pycache__' / 'cli.pyc').write_bytes(b'cache')
+        self.assertEqual(build(), first)  # Same files (caches are left out): same hash.
+        self.assertFalse(list((repo / 'vscode-extension' / 'cli').rglob('__pycache__')))
+        (repo / 'baton' / 'cli.py').write_text('print(2)\n')
+        changed = build()
+        self.assertNotEqual(changed, first)  # Same version, other code: another hash, so the extension reinstalls.
+        (repo / 'baton' / 'new.py').write_text('')
+        self.assertNotIn(build(), (first, changed))
 
     @unittest.skipIf(WINDOWS, 'installs from before current-version used a symlink, which Windows did not support anyway')
     def test_upgrades_a_symlink_install(self):

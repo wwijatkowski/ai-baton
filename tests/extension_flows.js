@@ -349,6 +349,27 @@ const withCopilot = (h) => {
   h.cli.status = () => sampleStatus({ agents: [...sampleStatus().agents, COPILOT] });
 };
 
+test('Copilot hooks: installed from its card after a consent naming the terminal; then no context request is copied', async (h) => {
+  h.installed.add('GitHub.copilot-chat');
+  const copilot = { ...COPILOT, hooks: 'copilot' };
+  h.cli.status = () => sampleStatus({ agents: [...sampleStatus().agents, copilot] });
+  let hooks = 'missing';
+  h.cli['hook-status'] = () => ({ copilot: { state: hooks } });
+  h.cli['install-hooks'] = () => { hooks = 'ok'; return '~ ai-baton.json'; };
+  await h.start();
+  await h.panel({ cmd: 'open', agent: 'copilot' });
+  assert.match(h.clipboard, /AGENTS\.md/, 'hooks not installed yet: the context request is copied');
+  h.clipboard = '';
+  h.on('info', /^Install AI Baton memory hooks for Copilot once/, 'Install');
+  await h.panel({ cmd: 'installHooks', agent: 'copilot' });
+  await h.settle();
+  assert.ok(h.dialogs.some((d) => /also run for Copilot in a terminal/.test(d.text)));
+  assert.deepStrictEqual(h.cliArgs('install-hooks'), [['install-hooks', '--agents=copilot']]);
+  assert.ok(h.dialogs.some((d) => /^Copilot hooks installed/.test(d.text)));
+  await h.panel({ cmd: 'open', agent: 'copilot' });
+  assert.strictEqual(h.clipboard, '', 'its hooks deliver the context');
+});
+
 test('Connect memory offers AI Baton\'s MCP server to Copilot; Disconnect withdraws it', async (h) => {
   withCopilot(h);
   await h.start();

@@ -212,7 +212,8 @@ async function installHooks(ids) {
   const agents = ((state.status && state.status.agents) || []).filter((a) => ids.includes(a.id));
   const ok = await vscode.window.showInformationMessage(
     `Install AI Baton memory hooks for ${agents.map((a) => a.label).join(' and ')} once, for all projects? ` +
-    'They go into your user settings and do nothing in folders that are not set up for AI Baton.',
+    'They go into your user settings and do nothing in folders that are not set up for AI Baton.' +
+    (ids.includes('copilot') ? ' Copilot\'s also run for Copilot in a terminal (~/.copilot/hooks/ai-baton.json).' : ''),
     { modal: true }, 'Install');
   if (!ok) return false;
   try {
@@ -222,6 +223,9 @@ async function installHooks(ids) {
     return false;
   }
   if (ids.includes('codex')) approveHooks('codex');
+  if (ids.includes('copilot')) {
+    vscode.window.showInformationMessage('Copilot hooks installed. New Copilot chats in agent mode get the shared context, and their turns are saved by themselves.');
+  }
   refreshAll();
   return true;
 }
@@ -427,7 +431,9 @@ async function openAgent(id, fresh) {
     output.appendLine(`${agent.label}: ${error.stack || error.message}`);
     return vscode.window.showErrorMessage(`Could not open ${agent.label}: ${error.message}`);
   }
-  if (!agent.hooks && !mcpAvailable(agent.id)) {
+  // Copilot's hooks are user-level and optional: they count once installed.
+  const hooked = agent.hooks && (agent.hooks !== 'copilot' || (state.hooks && state.hooks[agent.id] && state.hooks[agent.id].state === 'ok'));
+  if (!hooked && !mcpAvailable(agent.id)) {
     // Agents without lifecycle hooks or AI Baton's MCP server get the shared context by hand.
     await vscode.env.clipboard.writeText(CONTEXT_PROMPT);
     vscode.window.showInformationMessage(`${agent.label} has no hooks. A request to load the shared context is on your clipboard; paste it into the chat.`);
@@ -507,8 +513,10 @@ async function addAgent() {
   if (pick.id === '__search') return findAgents();
   try {
     await baton(['add-agent', JSON.stringify(pick.candidate.agent)]);
+    const copilot = pick.candidate.agent.id === 'copilot' && String(pick.candidate.agent.extension).toLowerCase() === 'github.copilot-chat';
     vscode.window.showInformationMessage(pick.candidate.builtin
       ? `${pick.candidate.agent.label} is back. In projects set up without it, run AI Baton: Initialize Project again to add its hooks.`
+      : copilot ? 'Copilot added. For shared memory, use Install hooks on its card (Connect memory adds the memory tools).'
       : `${pick.candidate.agent.label} added. It has no memory hooks: use Connect memory on its card if it shows one; otherwise, when you open it, AI Baton copies a context request for you to paste.`);
   } catch (error) {
     vscode.window.showErrorMessage(error.message);
@@ -632,7 +640,10 @@ async function removeAgent(id) {
   }
   const ok = await vscode.window.showWarningMessage(
     `Remove ${agent.label} from AI Baton? The extension stays installed` +
-    (agent.source ? '.' : ' and existing project hooks keep working. Add it back any time with Add agent.'),
+    (agent.source ? '.' : ' and existing project hooks keep working. Add it back any time with Add agent.') +
+    // Copilot's hooks are a user-level file of their own: removing the card leaves them running.
+    (agent.hooks === 'copilot' && state.hooks && state.hooks[agent.id] && state.hooks[agent.id].state === 'ok'
+      ? ' Its memory hooks stay active; to remove them run: baton uninstall-hooks --agents=copilot.' : ''),
     { modal: true }, 'Remove');
   if (!ok) return;
   try {

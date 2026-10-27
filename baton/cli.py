@@ -45,7 +45,7 @@ def main(argv=None):
     p.add_argument('agent')
     p.add_argument('--global', dest='user_level', action='store_true', help='installed in user settings, not the project')
     p = sub.add_parser('install-hooks', help='install memory hooks once for all projects (user settings)')
-    p.add_argument('--agents', help='comma-separated agent ids (default: all agents with hooks)')
+    p.add_argument('--agents', help='comma-separated agent ids (default: all agents with hooks; Copilot only when named)')
     p = sub.add_parser('uninstall-hooks', help='remove the memory hooks from user settings (and optionally a project)')
     p.add_argument('--agents', help='comma-separated agent ids (default: all)')
     p.add_argument('--project', help='also remove project hooks from this folder')

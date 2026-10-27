@@ -13,6 +13,7 @@ BLOCK_RE = re.compile(r'<!-- BEGIN AI-BATON -->.*?<!-- END AI-BATON -->', re.S)
 EVENTS = ('SessionStart', 'UserPromptSubmit', 'Stop')
 LEGACY = 'agent-memory.py'
 HOOK_FILES = {'claude': '.claude/settings.json', 'codex': '.codex/hooks.json'}
+# Not here: Copilot, whose hooks are user-level only, in a file of AI Baton's own (copilot_hook_file).
 
 
 class InitError(Exception):
@@ -136,6 +137,42 @@ def user_home():
     return Path.home()
 
 
+def copilot_home():
+    """Copilot's settings folder: COPILOT_HOME if set, else ~/.copilot (as the Copilot runtime resolves it)."""
+    custom = os.environ.get('COPILOT_HOME')
+    return Path(custom).expanduser() if custom else user_home() / '.copilot'
+
+
+def copilot_hook_file():
+    return copilot_home() / 'hooks' / 'ai-baton.json'
+
+
+def copilot_hooks():
+    """AI Baton's own Copilot hook file. PascalCase events, so payloads come in the snake_case form the hook reads;
+    one spelling only: with both, Copilot runs a Stop twice. `command` serves every OS: on Windows baton_command is
+    already a line PowerShell runs (as for Codex)."""
+    entry = {'type': 'command', 'command': hook_command('copilot', user_level=True), 'timeoutSec': 10}
+    return {'version': 1, 'hooks': {event: [dict(entry)] for event in EVENTS}}
+
+
+def copilot_events():
+    """Events with an AI Baton command hook in our Copilot hook file; a file of another shape counts as none."""
+    config = read_json(copilot_hook_file(), {}) if copilot_hook_file().is_file() else {}
+    hooks = config.get('hooks') if isinstance(config, dict) and config.get('version') == 1 else None
+    if not isinstance(hooks, dict):
+        return set()
+    return {event for event, entries in hooks.items() if isinstance(entries, list)
+            and any(isinstance(e, dict) and e.get('type', 'command') == 'command'
+                    and is_baton_hook(str(e.get('command') or ''), 'copilot') for e in entries)}
+
+
+def has_user_hooks(kind):
+    """All of SessionStart, UserPromptSubmit and Stop are hooked at user level for this hook kind."""
+    if kind == 'copilot':
+        return set(EVENTS) <= copilot_events()
+    return has_baton_hooks(user_home(), kind)
+
+
 def hook_config(path):
     """A hook file's content after checking its shape ({"hooks": {event: [{"hooks": [{...}]}]}}); None if absent."""
     if not path.exists():
@@ -193,6 +230,11 @@ def uninstall_hooks(only=None, project=None):
         hook_config(base / HOOK_FILES[kind])
     for base, kind, label in targets:
         remove_hooks(base, kind, log, label)
+    # Not looked up in the registry: the file stays active after Copilot is removed from the panel.
+    if (only is None or 'copilot' in only) and copilot_hook_file().exists():
+        # The whole file is AI Baton's own.
+        copilot_hook_file().unlink()
+        log.append(f'- {copilot_hook_file()}: removed')
     return log
 
 
@@ -202,6 +244,10 @@ def install_user_hooks(only=None):
     for agent in [a for a in load_agents() if a.get('hooks') in HOOK_FILES and (only is None or a['id'] in only)
                   and (only is not None or agent_binary(a['hooks']))]:
         merge_hooks(user_home(), agent['hooks'], False, log, user_level=True)
+    # Copilot only when named: it has no CLI to detect, and its hooks also run for Copilot in a terminal.
+    if only is not None and any(a.get('hooks') == 'copilot' and a['id'] in only for a in load_agents()):
+        write_json(copilot_hook_file(), copilot_hooks())
+        log.append(f'~ {copilot_hook_file()}: memory hooks {", ".join(EVENTS)}')
     return log
 
 

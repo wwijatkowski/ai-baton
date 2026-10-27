@@ -30,6 +30,9 @@ AGENT_KEYS = ('id', 'label', 'extension', 'openCommand', 'newCommand')
 AGENT_ID_RE = re.compile(r'[a-z0-9][a-z0-9-]{0,39}')
 # Files in .agent-memory/ next to the checkpoints (<agent>.json): no agent may be called this.
 RESERVED_IDS = {'activity', 'seen'}
+# Integrations a user-added agent gets from AI Baton itself, never from its own entry (add_agent keeps launch settings
+# only): keyed by the agent id and its extension, which must both match.
+INTEGRATIONS = {('copilot', 'github.copilot-chat'): {'hooks': 'copilot'}}
 
 
 class AgentError(Exception):
@@ -118,7 +121,14 @@ def load_agents(root=None, hidden=False):
     for source, more in (('user', registry['agents']), ('project', project or [])):
         known = {a['id'] for a in builtins + agents}
         agents += [{**a, 'source': source} for a in more if a.get('id') not in known]
-    return agents
+    return [with_integration(a) for a in agents]
+
+
+def with_integration(agent):
+    if agent.get('source') != 'user':
+        return agent
+    found = INTEGRATIONS.get((agent.get('id'), str(agent.get('extension') or '').lower()))
+    return {**agent, **found} if found else agent
 
 
 def user_registry():
