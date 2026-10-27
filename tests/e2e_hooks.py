@@ -3,7 +3,8 @@
 Both agents run their SessionStart and UserPromptSubmit hooks before they call a model, so a prompt in a throwaway
 home with no login (Claude gets an invalid API key) still exercises everything up to the model call: the hook
 commands as written to the agents' settings (on Windows: Claude's exec form, Codex through cmd.exe), Codex's hook
-approval as `baton hook-status` reports it, and one agent's checkpoint reaching the other's context. No tokens are
+approval as `baton hook-status` reports it, and checkpoints reaching the other agent's context and the same agent's
+next conversation. No tokens are
 used. Not part of unittest: it needs both CLIs (`npm install -g @anthropic-ai/claude-code @openai/codex`) and network.
 Run: python3 tests/e2e_hooks.py
 """
@@ -83,6 +84,12 @@ def main():
     agent([claude, '-p', 'say hi'], 'claude')
     delivered = [s for s in seen('claude').values() if s.get('codex') == codex_at]
     check(delivered, f"Claude's hooks delivered Codex's checkpoint: {seen('claude')}")
+    # A new conversation also gets its own agent's checkpoint from another conversation (one agent alone keeps going).
+    check([s for s in delivered if s.get('claude') == claude_at],
+          f"Claude's new conversation got Claude's earlier checkpoint: {seen('claude')}")
+    agent([codex, 'exec', '--skip-git-repo-check', 'say hi again'], 'codex')
+    check([s for s in seen('codex').values() if s.get('codex') == codex_at],
+          f"Codex's new conversation got Codex's earlier checkpoint: {seen('codex')}")
 
     # Each prompt hook marked its conversation as working.
     activity = json.loads((mem / 'activity.json').read_text(encoding='utf-8'))

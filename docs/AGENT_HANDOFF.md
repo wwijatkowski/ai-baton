@@ -2,17 +2,23 @@
 
 A short, current state of the work for the next agent. Replace outdated content; do not keep history here (that is what Git and `docs/knowledge/` are for).
 
-**Last updated:** 2026-10-26 (evening, Open VSX namespace verified), Claude
+**Last updated:** 2026-10-27, Claude
 
 ## Current state
 AI Baton 0.4.0 (preview) is PUBLISHED on the VS Code Marketplace and Open VSX (`wwijatkowski.ai-baton`, 2026-10-26, first automated release from the `v0.4.0` tag via `release.yml`; GitHub release with the .vsix). The repo `github.com/wwijatkowski/ai-baton` is public.
 - CLI (`baton/`, Python 3.9+, 3.11+ on Windows, stdlib only): global memory hooks for Claude and Codex, tiered memory, `review`, `recent`, `hook-status`, `install-hooks`, `uninstall-hooks`.
 - Extension (`vscode-extension/`): agents, Recent work, Ask for review, usage and limits. The .vsix bundles the CLI and installs it to `~/.ai-baton` on activation (stable launcher `bin/baton` for hooks).
-- Tests: `python3 -m unittest discover -s tests` (56, plus extension flows and webviews in Node); CI on Linux, Windows and macOS for every push and PR. Real agents: `sh tests/e2e_agents.sh`. UI: `docs/MANUAL_TEST.md`, six rounds by Claude desktop in `docs/UI_TEST_REPORT.md`.
+- Tests: `python3 -m unittest discover -s tests` (60, plus extension flows and webviews in Node); CI on Linux, Windows and macOS for every push and PR. Real agents: `sh tests/e2e_agents.sh`. UI: `docs/MANUAL_TEST.md`, six rounds by Claude desktop in `docs/UI_TEST_REPORT.md`.
 - Package: `sh scripts/package.sh` builds `ai-baton-0.3.0.vsix` (gitignored) and checks its contents.
 - Publishing accounts: Marketplace publisher `wwijatkowski` (extension id `wwijatkowski.ai-baton`); Open VSX namespace `wwijatkowski` is verified (EclipseFdn/open-vsx.org#14730 closed 2026-10-26), Publisher Agreement signed, nothing published there yet. Repo history is clean (noreply author, no private project names); the full old history is in the private repo `ai-baton-history` and `~/ai-baton-full-history-2026-10-26.bundle`.
 
-## Recently done (2026-10-26, branch `cross-platform-ci`, PR #1)
+## Recently done (2026-10-27, branch `review-model-own-checkpoint`, unreleased)
+- Hooks deliver an agent's own latest checkpoint when another conversation of it saved it (`build_context` in `baton/hook.py`, labelled "[claude, your other conversation]"). One agent alone keeps its thread across new chats; parallel chats see each other's work once.
+- `baton review --model M --effort E` for that run only (`reviewer_choice` in `baton/review.py`); the effort is checked against the effective model (chosen, else configured, else the agent's default). Panel step 2/3 lists each reviewer as configured, its last successful review choice, and "another model or effort…" (model pick, then effort pick).
+- Verified: 60 unit tests, 25 extension flows, `tests/e2e_hooks.py` with the real CLIs (now also checks own-checkpoint delivery), real `claude --model=haiku --effort=low` and `codex exec --model=gpt-6-luna -c model_reasoning_effort="low"` runs. Codex reviewed the diff: points 1 (effort vs effective model) and 3 (remember only after a successful run) applied; 2 (typed model id in the panel) deferred to STATUS.
+- Not yet checked by a person in the VS Code panel (docs/MANUAL_TEST.md 5b describes it).
+
+## Earlier (2026-10-26, branch `cross-platform-ci`, PR #1)
 - Windows support (native, not WSL, Python 3.11+), verified in CI including the real agent CLIs:
   - portable file lock (fcntl/msvcrt, 3 s);
   - UTF-8 for every file and pipe, LF for files git reads (a `\r` in `alternates` broke reviews without git);
@@ -43,7 +49,8 @@ Releasing (no stored tokens, see 1): bump the version and add a CHANGELOG sectio
 2. Optional: a manual look at the VS Code panel on Windows. CI covers the CLIs, hooks and the extension host, not the rendered webview.
 3. Publisher display name (waiting for VSMarketplace@microsoft.com). The user does not want promotional posts for now.
 4. Listing (0.4.1, released): display name "AI Baton: Claude Code & Codex memory, handoff, review" for Marketplace search (it weighs the name most; the id stays, so it can go back to "AI Baton" any time), wider keywords, Cursor/Windsurf via Open VSX in the description. The README starts with `media/screenshots/demo.gif` (33 s, 1.6 MB): recorded by Claude desktop with `screencapture -v` in a throwaway project, cut and sped up with ffmpeg; the raw video is `~/Movies/ai-baton-demo.mov`.
-5. Next session (user's plan): the MCP server for agents without hooks (STATUS To do 2).
+5. Merge the PR for this branch, check the review picker by hand (MANUAL_TEST 5b), then release 0.4.2 (CHANGELOG has an Unreleased section).
+6. Then: the MCP server for agents without hooks (STATUS To do 2).
 
 ## How we work (user's preferences)
 - Reply in Polish; docs in English. Ask before outward or destructive actions (pushes to other repos, history rewrites, deleting memory).

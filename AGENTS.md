@@ -37,6 +37,6 @@ Rules:
 - Never put secrets in docs or replies.
 - Do not edit the same files in parallel with another agent.
 - Do not mark anything as working without verifying it.
-- When the user asks for another agent's opinion (e.g. "ask Codex"), run `baton review --agent <name> "<goal of the change>"` (the hook context shows the full command). Check each point against the code, list which you accept, reject or defer and why, end with one line on how to answer ("ok" to apply, or name points to change), then wait for the user before changing anything.
+- When the user asks for another agent's opinion (e.g. "ask Codex", or "ask Opus at high effort"), run `baton review --agent <name> [--model <model>] [--effort <level>] "<goal of the change>"` (the hook context shows the full command; model and effort apply to that review only). Check each point against the code, list which you accept, reject or defer and why, end with one line on how to answer ("ok" to apply, or name points to change), then wait for the user before changing anything.
 <!-- END AI-BATON -->
 

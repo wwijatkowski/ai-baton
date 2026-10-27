@@ -28,6 +28,12 @@ def print_usage(report):
                 print(f'\nLimit {limit_id} ({label}): {state}')
 
 
+def reviewer_name(result):
+    """codex, or codex (gpt-5.5, high) when the review ran with its own model or effort."""
+    choice = ', '.join(v for v in (result.get('model'), result.get('effort')) if v)
+    return result['agent'] + (f' ({choice})' if choice else '')
+
+
 def main(argv=None):
     # Agents and the extension talk UTF-8 JSON; Windows would otherwise use its ANSI code page for the pipes.
     for stream in (sys.stdin, sys.stdout, sys.stderr):
@@ -75,12 +81,14 @@ def main(argv=None):
     p.add_argument('agent', help='built-in id, or JSON object: id, label, extension, openCommand, newCommand')
     p = sub.add_parser('remove-agent', help='remove an added agent or hide a built-in one')
     p.add_argument('id')
-    p = sub.add_parser('review', help='second opinion from another agent on recent work: changes (git or not) or replies (read-only)')
+    p = sub.add_parser('review', help='second opinion from any agent, optionally another model or effort, on recent work: changes (git or not) or replies (read-only)')
     p.add_argument('goal', nargs='?', help='what the change is meant to do')
     p.add_argument('--agent', required=True, help='reviewer, e.g. codex or claude')
     p.add_argument('--commit', help='review this commit instead of the uncommitted changes')
     p.add_argument('--focus', help='what the reviewer should pay special attention to')
     p.add_argument('--session', help='session whose work this is (its summary tells the reviewer the goal)')
+    p.add_argument('--model', help='reviewer model for this review only (default: as configured for the agent)')
+    p.add_argument('--effort', help='reviewer effort for this review only, e.g. low or high')
     p.add_argument('--path', default='.')
     p.add_argument('--json', action='store_true')
     p = sub.add_parser('usage', help='token usage and limits')
@@ -182,11 +190,12 @@ def main(argv=None):
             sys.exit(f'Error: {error}')
     elif args.command == 'review':
         try:
-            result = review.review(args.path, args.agent, args.goal, args.commit, args.focus, args.session)
+            result = review.review(args.path, args.agent, args.goal, args.commit, args.focus, args.session,
+                                   args.model, args.effort)
         except review.ReviewError as error:
             sys.exit(f'Error: {error}')
         print(json.dumps(result, ensure_ascii=False) if args.json
-              else f'Review by {result["agent"]} of {result["reviewed"]}:\n\n{result["review"]}')
+              else f'Review by {reviewer_name(result)} of {result["reviewed"]}:\n\n{result["review"]}')
     elif args.command == 'usage':
         report = usage.summarize(args.days, args.project)
         print(json.dumps(report, ensure_ascii=False) if args.json else '', end='')

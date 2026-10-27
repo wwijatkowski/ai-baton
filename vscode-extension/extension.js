@@ -42,8 +42,9 @@ let galleryCache = null;
 // Limit readings older than this are shown as stale: agents only save them now and then.
 const STALE_MINUTES = 60;
 
+const REVIEW_CHOICE = 'aiBaton.reviewChoice';  // Last model and effort chosen for a review, per agent.
 let state = { status: null, usage: null, projectUsage: null, models: null, scope: 'project', error: null, loading: true };
-let view, recentPanel, reviewDoc, statusItem, timer, watcher, output, extensionUri;
+let view, recentPanel, reviewDoc, statusItem, timer, watcher, output, extensionUri, memento;
 
 function config(key) {
   return vscode.workspace.getConfiguration('aiBaton').get(key);
@@ -579,9 +580,9 @@ async function removeAgent(id) {
   refreshAll();
 }
 
-// Second opinion from another agent on the current changes (`baton review`, read-only). Three steps: whose work
-// (the session whose summary explains the change, and where the review goes back to), who reviews, an optional focus.
-// `preset` is a Recent work entry when started from there.
+// Second opinion on the current changes (`baton review`, read-only). Three steps: whose work (the session whose
+// summary explains the change, and where the review goes back to), who reviews (any agent, as configured or with a
+// model and effort for this review only), an optional focus. `preset` is a Recent work entry when started from there.
 async function askForReview(preset) {
   const st = state.status;
   if (!st || !st.initialized) return vscode.window.showWarningMessage('Set up this project for AI Baton first.');
@@ -618,16 +619,34 @@ async function askForReview(preset) {
     session = picked.entry || null;
   }
 
-  // Someone other than the author reviews by default.
+  // Someone other than the author reviews by default. Each agent can also review with another model or effort (e.g.
+  // a cheap one for everyday changes, a strong one for big ones); the last such choice is offered again.
   const author = session && session.agent;
   reviewers.sort((a, b) => (a.id === author) - (b.id === author));
-  const pick = await vscode.window.showQuickPick(
-    reviewers.map((a) => ({ label: `$(hubot) ${a.label}`, description: a.id === author ? 'wrote this (self-review)' : '', agent: a })),
+  const remembered = (memento && memento.get(REVIEW_CHOICE)) || {};
+  const items = reviewers.flatMap((a) => {
+    const self = a.id === author ? 'wrote this (self-review)' : '';
+    const last = remembered[a.id];
+    const canChoose = state.models && state.models[a.id] && !state.models[a.id].error;
+    return [
+      { label: `$(hubot) ${a.label}`, description: [modelLabel(a.id) || 'as configured', self].filter(Boolean).join(' · '), agent: a },
+      last && (last.model || last.effort) && { label: `$(history) ${a.label} · ${choiceLabel(a.id, last)}`,
+        description: ['last used for review', self].filter(Boolean).join(' · '), agent: a, ...last },
+      canChoose && { label: `$(settings-gear) ${a.label}: another model or effort…`, description: self, agent: a, choose: true },
+    ].filter(Boolean);
+  });
+  let pick = await vscode.window.showQuickPick(items,
     { title: `Ask for review (2/3): who reviews${session ? ` ${label(author)}'s work` : ''}?`,
       placeHolder: sessions.length || session ? undefined
         : 'No agent conversation in this project yet, so the reviewer gets the current changes without an author.',
       ignoreFocusOut: true });
   if (!pick) return;
+  if (pick.choose) {
+    const choice = await chooseReviewModel(pick.agent);
+    if (!choice) return;
+    pick = { agent: pick.agent, ...choice, remember: !!(choice.model || choice.effort) };
+  }
+  const reviewer = pick.model || pick.effort ? `${pick.agent.label} (${choiceLabel(pick.agent.id, pick)})` : pick.agent.label;
 
   const context = !session ? 'the latest summary' : author === pick.agent.id ? 'its own summary from that conversation'
     : `${label(author)}'s summary from that conversation`;
@@ -646,11 +665,12 @@ async function askForReview(preset) {
   try {
     result = JSON.parse(await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification, cancellable: true,
-      title: `${pick.agent.label} is reviewing the work… (usually 1-3 minutes)`,
+      title: `${reviewer} is reviewing the work… (usually 1-3 minutes)`,
     }, (progress, token) => {
       token.onCancellationRequested(() => { cancelled = true; });
       // A little longer than the CLI's own 15-minute limit, so its clearer message wins.
       return baton(['review', '--json', '--agent', pick.agent.id, '--path', st.root,
+        ...(pick.model ? ['--model', pick.model] : []), ...(pick.effort ? ['--effort', pick.effort] : []),
         ...(focus ? ['--focus', focus] : []), ...(session ? ['--session', session.session_id] : [])],
       { timeout: 930000, token });
     }));
@@ -658,8 +678,10 @@ async function askForReview(preset) {
     if (cancelled) return;
     return vscode.window.showErrorMessage(`Review failed: ${error.message.replace(/^Error: /, '')}`);
   }
+  // Offered again only once it has actually run.
+  if (pick.remember && memento) await memento.update(REVIEW_CHOICE, { ...remembered, [pick.agent.id]: { model: pick.model, effort: pick.effort } });
   const { review, reviewed } = result;
-  const text = `# Review by ${pick.agent.label}\n\n- Reviewed: ${reviewed}` +
+  const text = `# Review by ${reviewer}\n\n- Reviewed: ${reviewed}` +
     (session ? `\n- Work of: ${label(author)}, conversation from ${ago(session.saved_at)}` : '') +
     (focus ? `\n- Focus: ${focus}` : '') + `\n\n${review}\n`;
   const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content: text });
@@ -670,12 +692,12 @@ async function askForReview(preset) {
   reviewDoc = doc;
 
   const target = session && st.agents.find((a) => a.id === author && a.installed && a.sessionUri);
-  const ask = `${pick.agent.label} reviewed ${reviewed}. Check each point against the code and list which you ` +
+  const ask = `${reviewer} reviewed ${reviewed}. Check each point against the code and list which you ` +
     `accept, reject or defer, and why, numbered like the review. Do not change anything yet. End with one line telling ` +
     `me how to answer: "ok" to apply the accepted points, or name the points to change (e.g. "ok, also 3, skip 4").\n\n${review}`;
   const send = target && `Send to ${target.label}`;
   const choice = await vscode.window.showInformationMessage(
-    `${pick.agent.label}'s review is ready.` + (send ? ` Send it back to ${target.label}'s conversation from ${ago(session.saved_at)}?` : ''),
+    `${reviewer}'s review is ready.` + (send ? ` Send it back to ${target.label}'s conversation from ${ago(session.saved_at)}?` : ''),
     ...[send, 'Copy review'].filter(Boolean));
   if (choice === 'Copy review') return vscode.env.clipboard.writeText(text);
   if (!send || choice !== send) return;  // Dismissed, or no conversation to send to.
@@ -685,6 +707,34 @@ async function askForReview(preset) {
   await openSession(target.id, session.session_id);
   vscode.window.showInformationMessage(`Review copied. Paste it into ${target.label} (${process.platform === 'darwin' ? '⌘V' : 'Ctrl+V'}) ` +
     `and send. ${target.label} lists what it accepts; reply "ok" to apply, or adjust the list.`);
+}
+
+// Model and effort for one review; the agent's own settings stay as they are. Empty values: as configured.
+async function chooseReviewModel(agent) {
+  const info = state.models[agent.id];
+  const configured = modelLabel(agent.id) || 'as configured';
+  const model = await vscode.window.showQuickPick([
+    { label: `Default (${configured})`, value: '' },
+    ...info.options.map((o) => ({ label: o.label, description: o.value !== o.label ? o.value : '', detail: o.description || undefined, value: o.value })),
+  ], { title: `${agent.label} reviews with which model?`, placeHolder: 'For this review only; new conversations keep their settings.', ignoreFocusOut: true });
+  if (!model) return null;
+  // "Default" runs the configured model (else the agent's default): offer that model's efforts.
+  const effective = model.value || info.model || info.defaultModel;
+  const option = info.options.find((o) => o.value === effective) || {};
+  const efforts = (option.efforts && option.efforts.length ? option.efforts : info.efforts) || [];
+  const effort = await vscode.window.showQuickPick([
+    { label: `Default${info.effort ? ` (${info.effort})` : ''}`, value: '' },
+    ...efforts.map((e) => ({ label: e, value: e })),
+  ], { title: `${agent.label}${model.value ? ` · ${model.label}` : ''} reviews with which effort?`,
+    placeHolder: 'Higher effort looks deeper and uses more of your plan.', ignoreFocusOut: true });
+  if (!effort) return null;
+  return { model: model.value, effort: effort.value };
+}
+
+function choiceLabel(id, { model, effort }) {
+  const info = state.models && state.models[id];
+  const option = model && info && !info.error && info.options.find((o) => o.value === model);
+  return [model && (option ? option.label : model), effort].filter(Boolean).join(' · ');
 }
 
 // Where a conversation runs, from the checkpoint's `client` (Claude's entrypoint, Codex's originator).
@@ -854,6 +904,7 @@ function render() {
 
 async function activate(context) {
   extensionUri = context.extensionUri;
+  memento = context.globalState;
   output = vscode.window.createOutputChannel('AI Baton');
   statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusItem.command = 'aiBaton.switchAgent';
