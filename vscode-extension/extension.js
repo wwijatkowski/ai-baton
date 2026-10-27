@@ -410,6 +410,9 @@ function updateStatusBar() {
 
 // ---------- actions ----------
 
+// A new Copilot CLI chat (Copilot's agent runtime, the one that runs its hooks) in the chat view.
+const COPILOT_CLI_NEW_CHAT = 'workbench.action.chat.openNewChatSessionInPlace.copilotcli';
+
 async function openAgent(id, fresh) {
   const agent = ((state.status && state.status.agents) || []).find((a) => a.id === id);
   if (!agent) return;
@@ -423,6 +426,18 @@ async function openAgent(id, fresh) {
       'Switch Anyway');
     if (!go) return;
   }
+  // Copilot's hooks are user-level and optional: they count once installed.
+  let hooked = agent.hooks && (agent.hooks !== 'copilot' || (state.hooks && state.hooks[agent.id] && state.hooks[agent.id].state === 'ok'));
+  if (fresh && hooked && agent.hooks === 'copilot') {
+    // Copilot runs hooks only in Copilot CLI chats; its plain new chat is a Local one, which runs none.
+    try {
+      await vscode.commands.executeCommand(COPILOT_CLI_NEW_CHAT, 'sidebar');
+      return;
+    } catch (error) {
+      output.appendLine(`Copilot CLI chat not available, opening a Local one: ${error.message}`);
+      hooked = false;
+    }
+  }
   // JSON has no `undefined`: a null in newArgs means "argument left out" (Claude reads a null session id as a string).
   const args = fresh && agent.newCommand ? (agent.newArgs || []).map((a) => (a === null ? undefined : a)) : [];
   try {
@@ -432,8 +447,6 @@ async function openAgent(id, fresh) {
     output.appendLine(`${agent.label}: ${error.stack || error.message}`);
     return vscode.window.showErrorMessage(`Could not open ${agent.label}: ${error.message}`);
   }
-  // Copilot's hooks are user-level and optional: they count once installed.
-  const hooked = agent.hooks && (agent.hooks !== 'copilot' || (state.hooks && state.hooks[agent.id] && state.hooks[agent.id].state === 'ok'));
   if (!hooked && !mcpAvailable(agent.id)) {
     // Agents without lifecycle hooks or AI Baton's MCP server get the shared context by hand.
     await vscode.env.clipboard.writeText(CONTEXT_PROMPT);

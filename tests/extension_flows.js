@@ -368,6 +368,18 @@ test('Copilot hooks: installed from its card after a consent naming the terminal
   assert.ok(h.dialogs.some((d) => /^Copilot hooks installed/.test(d.text)));
   await h.panel({ cmd: 'open', agent: 'copilot' });
   assert.strictEqual(h.clipboard, '', 'its hooks deliver the context');
+  // New chat: a Copilot CLI chat, the only kind that runs the hooks (the plain new chat is a Local one).
+  h.executed.length = 0;
+  await h.panel({ cmd: 'new', agent: 'copilot' });
+  assert.deepStrictEqual(h.executed, [['workbench.action.chat.openNewChatSessionInPlace.copilotcli', 'sidebar']]);
+  assert.strictEqual(h.clipboard, '');
+  // A VS Code without Copilot CLI chats: a Local one, and the context request is copied.
+  h.failing.add('workbench.action.chat.openNewChatSessionInPlace.copilotcli');
+  h.executed.length = 0;
+  await h.panel({ cmd: 'new', agent: 'copilot' });
+  await h.settle();
+  assert.deepStrictEqual(h.executed.map((c) => c[0]), ['workbench.action.chat.openNewChatSessionInPlace.copilotcli', 'workbench.action.chat.open']);
+  assert.match(h.clipboard, /AGENTS\.md/);
 });
 
 test('Connect memory offers AI Baton\'s MCP server to Copilot; Disconnect withdraws it', async (h) => {

@@ -711,7 +711,8 @@ class CopilotHooksTest(unittest.TestCase):
 
     def test_stop_past_its_budget_still_saves_without_git(self):
         path = self.transcript('slow', copilot_events('x', ('final_answer', 'Done late.', 'm1'), session='slow'))
-        with mock.patch.object(hook, 'COPILOT_STOP_BUDGET', 0), mock.patch.object(changes, 'git') as git:
+        with mock.patch.object(hook, 'COPILOT_STOP_BUDGET', 0), \
+                mock.patch.object(changes, 'git', return_value=None) as git:  # What git() gives past a deadline.
             self.stop('slow', path)
         self.assertEqual(read_json(self.project / '.agent-memory' / 'copilot.json')['last_reply'], 'Done late.')
         self.assertTrue(all(call.kwargs.get('deadline') is not None for call in git.call_args_list), git.call_args_list)
@@ -780,6 +781,45 @@ class CopilotHooksTest(unittest.TestCase):
         # Its own checkpoint through the tool keeps the hook mark.
         server.baton_checkpoint({'project_path': str(self.project), 'session_id': 'cp1', 'summary': 'Saved by hand.'})
         self.assertTrue(hook.hook_ran(self.project / '.agent-memory', 'copilot', 'cp1'))
+        # Hooks removed while the chat goes on: nothing saves its turns any more, so it is asked to.
+        init_project.uninstall_hooks({'copilot'})
+        self.assertFalse(hook.hook_ran(self.project / '.agent-memory', 'copilot', 'cp1'))
+        self.assertIn('call baton_checkpoint with it', server.baton_context({'project_path': str(self.project), 'session_id': 'cp1'}))
+
+    def test_parallel_stops_with_slow_change_capture_both_save(self):
+        import threading
+        paths = {sid: self.transcript(sid, copilot_events(sid, ('final_answer', f'Answer {sid}.', f'm{sid}'), session=sid))
+                 for sid in ('A', 'B')}
+        real = hook.changes.capture
+
+        def slow(*args, **kwargs):
+            time.sleep(3.5)  # Longer than the usual lock wait: captured inside the lock, B would give up.
+            return real(*args, **kwargs)
+        errors = []
+
+        def stop(sid):
+            try:
+                self.stop(sid, paths[sid])
+            except Exception as error:  # noqa: BLE001 (reported below)
+                errors.append(error)
+        with mock.patch.object(hook.changes, 'capture', slow):
+            threads = [threading.Thread(target=stop, args=(sid,)) for sid in paths]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(errors, [])
+        history = (self.project / '.agent-memory' / 'history.jsonl').read_text()
+        self.assertIn('Answer A.', history)
+        self.assertIn('Answer B.', history)
+
+    def test_stop_keeps_its_budget_while_a_lock_is_held(self):
+        path = self.transcript('s', copilot_events('x', ('final_answer', 'Done.', 'm1'), session='s'))
+        started = time.monotonic()
+        with mock.patch.object(hook, 'COPILOT_STOP_BUDGET', 1), project.file_lock(self.project / '.agent-memory' / '.history.lock'):
+            with self.assertRaises(TimeoutError):  # The CLI reports it; the agent goes on.
+                self.stop('s', path)
+        self.assertLess(time.monotonic() - started, 2.5)
 
     def test_a_stop_saves_once_per_reply_in_each_conversation(self):
         a = self.transcript('A', copilot_events('a', ('final_answer', 'Answer A.', 'mA'), session='A'))
@@ -1141,6 +1181,8 @@ class ReviewTest(unittest.TestCase):
         # Read-only by construction, and flagged so the reviewer's own hooks stay out of shared memory.
         self.assertIn('--tools Read,Grep,Glob', claude)
         self.assertRegex(claude, r'--session-id [0-9a-f-]{36}')  # Recorded, so it never sets the last used model.
+        with mock.patch.object(models, 'add_review_session', side_effect=PermissionError('read-only cache')):
+            self.assertIn('--tools Read,Grep,Glob', review.review(self.project, 'claude')['review'])  # Still runs.
         self.assertIn('--sandbox read-only', result['review'])
         self.assertIn('env: 1', claude)
         self.assertIn('env: 1', result['review'])

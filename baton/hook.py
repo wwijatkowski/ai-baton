@@ -36,7 +36,9 @@ MAX_OMITTED_AGENTS = 8
 MIN_SUMMARY = 400
 SUMMARY_FALLBACK = 600
 MAX_HANDOFF = 1500
-COPILOT_TAIL = 512 * 1024  # Bytes of a Copilot transcript read at Stop: the current turn is at its end.
+# Bytes of a Copilot transcript read at Stop: the current turn is at its end. Tool output (file reads, command output)
+# can make one turn megabytes long; a turn whose start is not in this tail is not saved.
+COPILOT_TAIL = 8 * 1024 * 1024
 # Conversation -> messageId of the last reply saved from its transcript. A dot name: no agent can be called that.
 COPILOT_RECEIPTS = '.copilot-stops.json'
 MAX_RECEIPTS = 500
@@ -141,13 +143,18 @@ def busy_warning(mem, agent, session_id):
 KEPT_ACTIVITY = ('hook',)  # Facts about a conversation that outlive its state changes.
 
 
-def set_activity(mem, agent, state, session_id, transcript=None, unless_after=None, **facts):
+def lock_time(deadline, usual=3):
+    """How long a lock may be waited for: the usual time, or what is left before `deadline` (monotonic)."""
+    return usual if deadline is None else min(usual, max(0.1, deadline - time.monotonic()))
+
+
+def set_activity(mem, agent, state, session_id, transcript=None, unless_after=None, deadline=None, **facts):
     """Record this conversation's state; two conversations of one agent no longer overwrite each other. Each agent
     also keeps an agent-level summary (the older format). Locked: hooks of parallel sessions would lose updates.
     `facts` (KEPT_ACTIVITY) stay with the conversation until changed: hook=True once its own hook ran (Copilot).
     `unless_after` (an ISO time): leave a conversation alone that started working after it."""
     path = mem / 'activity.json'
-    with file_lock(mem / '.activity.lock'):
+    with file_lock(mem / '.activity.lock', timeout=lock_time(deadline)):
         activity = read_json(path, {}) or {}
         sessions = agent_sessions(activity.get(agent))
         previous = sessions.get(str(session_id or '')) or {}
@@ -168,12 +175,12 @@ def set_activity(mem, agent, state, session_id, transcript=None, unless_after=No
         write_json(path, activity, private=True)
 
 
-def append_history(mem, snapshot):
+def append_history(mem, snapshot, deadline=None):
     """Add a checkpoint to the history, moving the oldest ones to the gzip archive. Several agents can stop at the
     same moment, so the whole read-modify-write runs under a lock: unlocked, two writers once interleaved their gzip
     members and damaged the archive."""
     history = mem / HISTORY
-    with file_lock(mem / '.history.lock'):
+    with file_lock(mem / '.history.lock', timeout=lock_time(deadline)):
         lines = history.read_text(encoding='utf-8').splitlines() if history.exists() else []
         lines.append(json.dumps(snapshot, ensure_ascii=False))
         overflow, lines = lines[:-HISTORY_LIMIT], lines[-HISTORY_LIMIT:]
@@ -186,9 +193,11 @@ def append_history(mem, snapshot):
         write_text(history, '\n'.join(lines) + '\n', private=True)
 
 
-def save_checkpoint(mem, root, agent, payload, turn_start=None, summary=None, client=None, extra=None, deadline=None):
+def save_checkpoint(mem, root, agent, payload, turn_start=None, summary=None, client=None, extra=None, deadline=None,
+                    found=None):
     """Save the agent's checkpoint; returns it, or None when there was nothing to save. Hooks pass the payload only;
-    `baton mcp` passes the conversation's start, the summary the agent wrote and the MCP client's name."""
+    `baton mcp` passes the conversation's start, the summary the agent wrote and the MCP client's name. `found`: the
+    changes, already captured (see capture_changes)."""
     message = payload.get('last_assistant_message')
     if not isinstance(message, str) or not message.strip():
         return None  # Keep the last useful checkpoint after failed or empty turns.
@@ -199,8 +208,8 @@ def save_checkpoint(mem, root, agent, payload, turn_start=None, summary=None, cl
         sessions = agent_sessions((read_json(mem / 'activity.json', {}) or {}).get(agent))
         turn = sessions.get(str(payload.get('session_id') or '')) or {}
         turn_start = turn.get('at') if turn.get('state') == 'working' else own
-    previous = max((s.get('saved_at', '') for s in other_snapshots(mem, None, root)), default=None)
-    found = changes.capture(root, mem, previous, f'{agent} {saved_at}', deadline)
+    if found is None:
+        found = capture_changes(mem, root, agent, saved_at, deadline)
     found['changed'] = redact('\n'.join(found['changed'])).splitlines()
     reply = redact(message)
     snapshot = {
@@ -217,8 +226,13 @@ def save_checkpoint(mem, root, agent, payload, turn_start=None, summary=None, cl
     if found['kind'] == 'git':
         snapshot.update(branch=found['branch'], commit=found['commit'])
     write_json(mem / (agent + '.json'), snapshot, private=True)
-    append_history(mem, snapshot)
+    append_history(mem, snapshot, deadline)
     return snapshot
+
+
+def capture_changes(mem, root, agent, saved_at, deadline=None):
+    previous = max((s.get('saved_at', '') for s in other_snapshots(mem, None, root)), default=None)
+    return changes.capture(root, mem, previous, f'{agent} {saved_at}', deadline)
 
 
 def client_of(agent, payload):
@@ -406,24 +420,40 @@ def run_copilot(mem, root, event, session_id, payload):
         changes.baseline(root, mem)
         set_activity(mem, 'copilot', 'working', session_id, hook=True)
     elif event == 'Stop':
+        # Every step, locks included, within one budget, well inside the hook's 10 s timeout.
         deadline = time.monotonic() + COPILOT_STOP_BUDGET
-        wait_for_copilot_reply(mem, payload.get('transcript_path'), session_id)
-        # Locked, the transcript read inside: a Stop that is late or seen twice finds the newest reply already saved.
-        # Receipts per conversation live apart from activity.json, which forgets older conversations.
-        with file_lock(mem / '.copilot-stop.lock', timeout=min(3, max(0.1, deadline - time.monotonic()))):
-            found = copilot_reply(payload.get('transcript_path'), session_id)
-            receipts = read_json(mem / COPILOT_RECEIPTS, {}) or {}
-            if not isinstance(receipts, dict):
-                receipts = {}
-            if found and receipts.get(str(session_id or '')) != found['message_id']:
-                save_checkpoint(mem, root, 'copilot', {'session_id': session_id, 'last_assistant_message': found['reply']},
-                                client=found['client'], extra={'message_id': found['message_id']}, deadline=deadline)
-                receipts.pop(str(session_id or ''), None)
-                receipts[str(session_id or '')] = found['message_id']
-                write_json(mem / COPILOT_RECEIPTS, dict(list(receipts.items())[-MAX_RECEIPTS:]), private=True)
+        transcript = payload.get('transcript_path')
+        wait_for_copilot_reply(mem, transcript, session_id)
+        found = copilot_reply(transcript, session_id)
+        if found and copilot_saved(mem, session_id) != found['message_id']:
+            # The slow part (git, snapshots) before the lock, so Stops of parallel chats do not queue behind it.
+            saved_at = now_iso()
+            captured = capture_changes(mem, root, 'copilot', saved_at, deadline)
+            # Locked, the transcript read again inside: a Stop that is late or seen twice finds the newest reply
+            # already saved. Receipts per conversation live apart from activity.json, which forgets older ones.
+            with file_lock(mem / '.copilot-stop.lock', timeout=lock_time(deadline)):
+                found = copilot_reply(transcript, session_id)
+                if found and copilot_saved(mem, session_id) != found['message_id']:
+                    save_checkpoint(mem, root, 'copilot', {'session_id': session_id, 'last_assistant_message': found['reply']},
+                                    client=found['client'], extra={'message_id': found['message_id']}, deadline=deadline,
+                                    found=captured)
+                    receipts = copilot_receipts(mem)
+                    receipts.pop(str(session_id or ''), None)
+                    receipts[str(session_id or '')] = found['message_id']
+                    write_json(mem / COPILOT_RECEIPTS, dict(list(receipts.items())[-MAX_RECEIPTS:]), private=True)
         # A late Stop must not end a turn that started after it fired.
-        set_activity(mem, 'copilot', 'idle', session_id, hook=True, unless_after=payload.get('timestamp'))
+        set_activity(mem, 'copilot', 'idle', session_id, hook=True, unless_after=payload.get('timestamp'), deadline=deadline)
     return {}
+
+
+def copilot_receipts(mem):
+    receipts = read_json(mem / COPILOT_RECEIPTS, {}) or {}
+    return receipts if isinstance(receipts, dict) else {}
+
+
+def copilot_saved(mem, session_id):
+    """messageId of the last reply saved for this conversation."""
+    return copilot_receipts(mem).get(str(session_id or ''))
 
 
 def wait_for_copilot_reply(mem, transcript, session_id):
@@ -432,15 +462,16 @@ def wait_for_copilot_reply(mem, transcript, session_id):
     deadline = time.monotonic() + COPILOT_REPLY_WAIT
     while True:
         found = copilot_reply(transcript, session_id)
-        receipts = read_json(mem / COPILOT_RECEIPTS, {}) or {}
-        saved = receipts.get(str(session_id or '')) if isinstance(receipts, dict) else None
-        if (found and found['message_id'] != saved) or time.monotonic() >= deadline:
+        if (found and found['message_id'] != copilot_saved(mem, session_id)) or time.monotonic() >= deadline:
             return
         time.sleep(0.1)
 
 
 def hook_ran(mem, agent, session_id):
-    """Whether this agent's own hook has run in this conversation (so it saves the turns)."""
+    """Whether this agent's own hook has run in this conversation and is still installed (so it saves the turns)."""
+    from .init_project import has_user_hooks
+    if agent == 'copilot' and not has_user_hooks('copilot'):
+        return False  # Removed since: nothing saves this chat's turns any more.
     sessions = agent_sessions((read_json(mem / 'activity.json', {}) or {}).get(agent))
     return bool(session_id) and bool((sessions.get(str(session_id)) or {}).get('hook'))
 

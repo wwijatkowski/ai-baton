@@ -388,33 +388,38 @@ async function round(options) {
     const t5 = await ask('t5', "Call AI Baton's baton_context tool for this project, passing the session_id from your AI " +
       'Baton context, then quote the last paragraph of its result word for word. Use no other tool, and do not call ' +
       'baton_checkpoint.', { tools: /baton_context$/ });
-    await driver.send({ op: 'config', key: 'chat.permissions.default', value: undefined });
-    const contexts = t5.calls.filter((c) => /baton_context$/.test(c.name));
-    check('ASSERT', 't5: called baton_context, which succeeded', contexts.length >= 1 && contexts.every((c) => c.success),
+    const contexts = (t) => t.calls.filter((c) => /baton_context$/.test(c.name));
+    check('ASSERT', 't5: called baton_context, which succeeded', contexts(t5).length >= 1 && contexts(t5).every((c) => c.success),
       JSON.stringify(t5.calls.map((c) => [c.name, c.success])));
     check('ASSERT', "t5: baton_context got this chat's session_id and said the Stop hook saves the turns",
-      contexts.some((c) => c.args.session_id === t5.id && c.result.includes("saved by AI Baton's Stop hook") &&
+      contexts(t5).some((c) => c.args.session_id === t5.id && c.result.includes("saved by AI Baton's Stop hook") &&
         !c.result.includes('call baton_checkpoint with it')),
-      JSON.stringify(contexts.map((c) => [c.args.session_id, c.result.slice(-300)])));
+      JSON.stringify(contexts(t5).map((c) => [c.args.session_id, c.result.slice(-300)])));
     check('ASSERT', 't5: no baton_checkpoint call', !t5.calls.some((c) => /baton_checkpoint$/.test(c.name)));
 
-    // 6. Hooks removed (memory tools still on): a new chat runs none and saves nothing.
+    // 6. Hooks removed, the same chat goes on (memory tools still on): no hook runs, nothing is saved, and
+    // baton_context now asks it to save by itself.
     baton(['uninstall-hooks', '--agents=copilot']);
     check('ASSERT', 'Copilot hooks removed', !fs.existsSync(path.join(COPILOT_HOME, 'hooks', 'ai-baton.json')));
-    await driver.send({ op: 'command', id: NEW_CHAT, args: ['sidebar'] });
-    const t6 = await ask('t6', 'Reply with just: ok. Do not read files or use any tools.', { saved: false });
+    const t6 = await ask('t6', 'Call baton_context again with the same session_id and quote the last paragraph of its ' +
+      'result word for word. Use no other tool, and do not call baton_checkpoint.', { tools: /baton_context$/, saved: false });
+    await driver.send({ op: 'config', key: 'chat.permissions.default', value: undefined });
+    check('ASSERT', 't6: same conversation as t5', t6.id === t5.id, `${t5.id} / ${t6.id}`);
     check('ASSERT', 't6: no SessionStart hook ran', t6.sessionStarts.length === 0, JSON.stringify(t6.sessionStarts));
+    check('ASSERT', 't6: without hooks, baton_context asks for baton_checkpoint',
+      contexts(t6).some((c) => c.success && c.args.session_id === t5.id && c.result.includes('call baton_checkpoint with it')),
+      JSON.stringify(contexts(t6).map((c) => [c.args.session_id, c.result.slice(-300)])));
 
-    // 7. Hooks installed while that chat is open (Install hooks on the card): does its next turn run them? Reported
-    // only: Copilot may read its hooks when a conversation starts.
+    // 7. Hooks installed while that chat is open (Install hooks on the card): its next turn runs them.
     const fifth = randomName();
     seed(fifth);
     baton(['install-hooks', '--agents=copilot']);
-    const t7 = await ask('t7', "What is this project's current codename, according to your AI Baton context? " +
-      'Answer with the codename only, or "unknown". Do not read files or use any tools.', { saved: null });
+    const t7 = await ask('t7', "What is this project's current codename, according to your newest AI Baton context? " +
+      'Answer with the codename only, or "unknown". Do not read files or use any tools.');
     check('ASSERT', 't7: same conversation as t6', t7.id === t6.id, `${t6.id} / ${t7.id}`);
-    check('INFO', 't7: SessionStart ran in the open chat after the install', t7.sessionStarts.some((s) => s.success),
-      JSON.stringify(t7.sessionStarts.map((s) => [s.source, s.success])));
+    check('ASSERT', "t7: after the install, this turn's SessionStart carried the newest codename",
+      t7.sessionStarts.some((s) => s.success && s.context.includes(fifth)), JSON.stringify(t7.sessionStarts.map((s) => [s.source, s.success])));
+    // The model's answer, not the hooks (as t3).
     check('INFO', 't7: knows the codename', knows(t7.reply, fifth), `expected ${fifth}, got "${t7.reply.slice(0, 200)}"`);
     // A Stop that came late could add a duplicate after a turn was checked.
     await sleep(3000);

@@ -363,7 +363,10 @@ def run_reviewer(kind, root, prompt, diff, notes='', block='diff', model='', eff
         choice = ([f'--model={model}'] if model else []) + ([f'--effort={effort}'] if effort else [])
         # A known session id, so its transcript (kept: usage counts its tokens) never passes for the user's last model.
         session = str(uuid.uuid4())
-        models.add_review_session(session)
+        try:
+            models.add_review_session(session)
+        except (OSError, TimeoutError):
+            pass  # Bookkeeping only: at worst this review's model shows as last used.
         code, text, err = run([exe, '-p', prompt, '--tools', 'Read,Grep,Glob', '--strict-mcp-config',
                                '--session-id', session, *choice], root, stdin)
     if code != 0:

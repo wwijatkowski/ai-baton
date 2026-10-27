@@ -53,7 +53,7 @@ Then start a new chat in either agent.
 
 Add Copilot with **Add agent**, then click **Install hooks** on its card. AI Baton writes its own hook file, `~/.copilot/hooks/ai-baton.json` (or under `COPILOT_HOME`), so Copilot gets the shared context with each message and its final answer is saved as its checkpoint, the way Claude Code and Codex hooks work. No tool calls are needed.
 
-The hooks run only in **Copilot CLI** chats, the agent runtime you pick in the chat's session type. A **Local** chat runs no hooks and gets no memory from them; use a Copilot CLI chat, or connect the memory tools (below). Chats that are already open pick the hooks up from their next message. The same hook file also applies to the Copilot CLI in a terminal.
+The hooks run only in **Copilot CLI** chats, the agent runtime you pick in the chat's session type; **New chat** on the card opens one. A **Local** chat runs no hooks and gets no memory from them; use a Copilot CLI chat, or connect the memory tools (below). A turn with megabytes of tool output may not be saved; the previous checkpoint then stays. Chats that are already open pick the hooks up from their next message. The same hook file also applies to the Copilot CLI in a terminal.
 
 **Connect memory tools** on the card adds AI Baton's MCP tools as well, e.g. to search older checkpoints. In a chat whose hooks ran, the tools do not ask Copilot to save checkpoints itself, so no turn is saved twice.
 
