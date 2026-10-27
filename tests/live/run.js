@@ -8,7 +8,7 @@
 // A small driver extension (tests/live/driver) sends chat messages and reloads the window on request.
 //
 //   node tests/live/run.js setup            open the test window once and sign in to GitHub (Copilot), then close it
-//   node tests/live/run.js round [--keep] [--no-build]   run a round (4 messages); --keep leaves the test project
+//   node tests/live/run.js round [--keep] [--no-build]   run a round (7 messages); --keep leaves the test project
 //   node tests/live/run.js clean            delete the whole test profile, sign-in included (not keychain items)
 //   node tests/live/run.js probe [regex]    list matching VS Code commands (no Copilot messages)
 //
@@ -69,6 +69,9 @@ function writeSettings() {
     'extensions.autoUpdate': false,
     'extensions.autoCheckUpdates': false,
   });
+  // Set by a round for its memory-tools turn; left behind only if that round's window died.
+  delete settings['aiBaton.memoryTools'];
+  delete settings['chat.permissions.default'];
   fs.writeFileSync(file, JSON.stringify(settings, null, 2));
 }
 
@@ -257,8 +260,10 @@ async function round(options) {
   const driver = new Driver(io);
   const window = launch(io, project);
 
-  // One message; returns what its turn shows in events.jsonl, checked against what the Stop hook saved.
-  const ask = async (label, text) => {
+  // One message; returns what its turn shows in events.jsonl, checked against what the Stop hook saved. `tools`: the
+  // tool names the turn may call (none by default). `saved`: true, the Stop hook must save the reply; false, it must
+  // not (no hooks installed); null, only reported.
+  const ask = async (label, text, { tools = null, saved = true } = {}) => {
     const query = `[${label}-${crypto.randomBytes(3).toString('hex')}] ${text}`;
     const returned = await driver.send({ op: 'chat', query }, CHAT_TIMEOUT);
     const session = await waitFor(() => {
@@ -269,19 +274,28 @@ async function round(options) {
     if (!t.final) throw new Error(`${label}: no final answer (sign-in, quota or model error?): ${JSON.stringify(t.errors).slice(0, 800)}`);
     const reply = t.final.content.trim();
     const id = ev.sessionId(session.events);
-    check('ASSERT', `${label}: no tools used`, t.tools.length === 0, t.tools.join(', '));
+    const unexpected = t.tools.filter((name) => !(tools && tools.test(name)));
+    check('ASSERT', tools ? `${label}: no tools but ${tools}` : `${label}: no tools used`, unexpected.length === 0, t.tools.join(', '));
+    if (saved === false) {
+      // Long enough for a Stop hook (its own wait included) to have saved, had one run.
+      await sleep(8000);
+      const entries = copilotHistory().filter((e) => e.message_id === t.final.messageId);
+      check('ASSERT', `${label}: not saved (no hooks)`, copilotSaved().message_id !== t.final.messageId && entries.length === 0,
+        `${entries.length} history entries`);
+      return { query, reply, id, sessionStarts: t.sessionStarts, calls: t.calls, returned, saved: false };
+    }
     const record = await waitFor(() => {
       const current = copilotSaved();
       return current.message_id === t.final.messageId && current;
     }, 20000, `${label}: the Stop hook did not save this reply`).catch((error) => ({ error: error.message }));
-    // These replies are one short codename: the saved text must be exactly the reply.
-    check('ASSERT', `${label}: reply saved by the Stop hook`, !record.error && record.session_id === id && reply !== '' &&
-      String(record.last_reply || '').trim() === reply, record.error || `session ${id}, saved "${String(record.last_reply).slice(0, 80)}"`);
     const entries = copilotHistory().filter((e) => e.message_id === t.final.messageId);
-    check('ASSERT', `${label}: one history entry for this reply`, entries.length === 1 && entries[0].session_id === id,
-      `${entries.length} entries`);
-    replies.push({ label, id, messageId: t.final.messageId });
-    return { query, reply, id, sessionStarts: t.sessionStarts, returned };
+    // Short replies: the saved text must be exactly the reply.
+    const ok = !record.error && record.session_id === id && reply !== '' && String(record.last_reply || '').trim() === reply &&
+      entries.length === 1 && entries[0].session_id === id;
+    const detail = record.error || `session ${id}, saved "${String(record.last_reply).slice(0, 80)}", ${entries.length} history entries`;
+    check(saved ? 'ASSERT' : 'INFO', `${label}: reply saved once by the Stop hook`, ok, detail);
+    if (!record.error) replies.push({ label, id, messageId: t.final.messageId });
+    return { query, reply, id, sessionStarts: t.sessionStarts, calls: t.calls, returned, saved: !record.error };
   };
   const knows = (reply, codename) => reply.toUpperCase().includes(codename);
 
@@ -363,6 +377,45 @@ async function round(options) {
       'Answer with the codename only. Do not read files or use any tools.');
     check('ASSERT', 't4: a new conversation', t4.id !== t1.id && t4.id !== t3.id, t4.id);
     check('ASSERT', 't4: the new chat got the newest context', knows(t4.reply, fourth), `expected ${fourth}, got "${t4.reply.slice(0, 200)}"`);
+
+    // 5. Hooks and memory tools together (Connect memory on the card sets aiBaton.memoryTools). A chat whose hook
+    // ran must not be asked for baton_checkpoint: the Stop hook saves its turns, a checkpoint too would save twice.
+    // The test chat approves tool calls by itself (the permission level of new chats), for this chat only.
+    await driver.send({ op: 'config', key: 'aiBaton.memoryTools', value: 'copilot' });
+    await driver.send({ op: 'config', key: 'chat.permissions.default', value: 'autoApprove' });
+    await sleep(5000);  // VS Code asks the provider again and starts the server.
+    await driver.send({ op: 'command', id: NEW_CHAT, args: ['sidebar'] });
+    const t5 = await ask('t5', "Call AI Baton's baton_context tool for this project, passing the session_id from your AI " +
+      'Baton context, then quote the last paragraph of its result word for word. Use no other tool, and do not call ' +
+      'baton_checkpoint.', { tools: /baton_context$/ });
+    await driver.send({ op: 'config', key: 'chat.permissions.default', value: undefined });
+    const contexts = t5.calls.filter((c) => /baton_context$/.test(c.name));
+    check('ASSERT', 't5: called baton_context, which succeeded', contexts.length >= 1 && contexts.every((c) => c.success),
+      JSON.stringify(t5.calls.map((c) => [c.name, c.success])));
+    check('ASSERT', "t5: baton_context got this chat's session_id and said the Stop hook saves the turns",
+      contexts.some((c) => c.args.session_id === t5.id && c.result.includes("saved by AI Baton's Stop hook") &&
+        !c.result.includes('call baton_checkpoint with it')),
+      JSON.stringify(contexts.map((c) => [c.args.session_id, c.result.slice(-300)])));
+    check('ASSERT', 't5: no baton_checkpoint call', !t5.calls.some((c) => /baton_checkpoint$/.test(c.name)));
+
+    // 6. Hooks removed (memory tools still on): a new chat runs none and saves nothing.
+    baton(['uninstall-hooks', '--agents=copilot']);
+    check('ASSERT', 'Copilot hooks removed', !fs.existsSync(path.join(COPILOT_HOME, 'hooks', 'ai-baton.json')));
+    await driver.send({ op: 'command', id: NEW_CHAT, args: ['sidebar'] });
+    const t6 = await ask('t6', 'Reply with just: ok. Do not read files or use any tools.', { saved: false });
+    check('ASSERT', 't6: no SessionStart hook ran', t6.sessionStarts.length === 0, JSON.stringify(t6.sessionStarts));
+
+    // 7. Hooks installed while that chat is open (Install hooks on the card): does its next turn run them? Reported
+    // only: Copilot may read its hooks when a conversation starts.
+    const fifth = randomName();
+    seed(fifth);
+    baton(['install-hooks', '--agents=copilot']);
+    const t7 = await ask('t7', "What is this project's current codename, according to your AI Baton context? " +
+      'Answer with the codename only, or "unknown". Do not read files or use any tools.', { saved: null });
+    check('ASSERT', 't7: same conversation as t6', t7.id === t6.id, `${t6.id} / ${t7.id}`);
+    check('INFO', 't7: SessionStart ran in the open chat after the install', t7.sessionStarts.some((s) => s.success),
+      JSON.stringify(t7.sessionStarts.map((s) => [s.source, s.success])));
+    check('INFO', 't7: knows the codename', knows(t7.reply, fifth), `expected ${fifth}, got "${t7.reply.slice(0, 200)}"`);
     // A Stop that came late could add a duplicate after a turn was checked.
     await sleep(3000);
     const all = copilotHistory();
@@ -376,6 +429,10 @@ async function round(options) {
       baton(['uninstall-hooks', '--agents=copilot']);
     } catch {
       // The CLI may never have been installed.
+    }
+    // The test profile keeps its settings for the next round: back to no memory tools and manual approvals.
+    for (const key of ['aiBaton.memoryTools', 'chat.permissions.default']) {
+      await driver.send({ op: 'config', key, value: undefined }, 10000).catch(() => {});
     }
     const stopped = await stop(window, driver);
     check('ASSERT', 'the test VS Code ended', stopped);

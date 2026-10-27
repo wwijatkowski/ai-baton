@@ -59,6 +59,9 @@ async function execute(command) {
         { mode: 'agent', query: command.query, isPartialQuery: false, blockOnResponse: true }));
     case 'commands':
       return (await vscode.commands.getCommands(true)).filter((id) => new RegExp(command.match, 'i').test(id)).sort();
+    case 'config':
+      // A user setting of the test profile; undefined (no value in JSON) removes it.
+      return plain(await vscode.workspace.getConfiguration().update(command.key, command.value, vscode.ConfigurationTarget.Global));
     case 'command':
       return plain(await vscode.commands.executeCommand(command.id, ...(command.args || [])));
     default:

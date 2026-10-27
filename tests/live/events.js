@@ -1,6 +1,6 @@
 // Reads Copilot's events.jsonl for the live test. Written apart from baton/hook.py's copilot_reply on purpose: the
 // test must not share the code it checks. Only what the assertions need: one turn's final answer, its tool calls
-// and its hook runs.
+// (with their arguments and results) and its hook runs.
 const fs = require('fs');
 const path = require('path');
 
@@ -64,6 +64,12 @@ function turn(events, query) {
   return {
     final: finals.length ? finals[finals.length - 1].data : null,
     tools: inside.filter((e) => e.type === 'tool.execution_start').map((e) => e.data && e.data.toolName),
+    calls: inside.filter((e) => e.type === 'tool.execution_start' && e.data).map((e) => {
+      const done = inside.find((x) => x.type === 'tool.execution_complete' && x.data && x.data.toolCallId === e.data.toolCallId);
+      const result = done && done.data.result;
+      return { name: e.data.toolName, args: e.data.arguments || {}, success: done ? done.data.success : null,
+        result: result && typeof result.content === 'string' ? result.content : '' };
+    }),
     ended: inside.some((e) => e.type === 'assistant.turn_end'),
     sessionStarts: hookRuns(inside, 'sessionStart'),
     errors: inside.filter((e) => /error/i.test(e.type)).map((e) => ({ type: e.type, data: e.data })),
