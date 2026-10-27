@@ -31,7 +31,7 @@ Releasing (no stored tokens, see 1): bump the version and add a CHANGELOG sectio
 3. Publisher display name (waiting for VSMarketplace@microsoft.com). The user does not want promotional posts for now.
 4. Listing (0.4.1, released): display name "AI Baton: Claude Code & Codex memory, handoff, review" for Marketplace search (it weighs the name most; the id stays, so it can go back to "AI Baton" any time), wider keywords, Cursor/Windsurf via Open VSX in the description. The README starts with `media/screenshots/demo.gif` (33 s, 1.6 MB): recorded by Claude desktop with `screencapture -v` in a throwaway project, cut and sped up with ffmpeg; the raw video is `~/Movies/ai-baton-demo.mov`.
 5. Done: 0.5.0 released; Copilot hooks built on `copilot-hooks`.
-6. Next: Codex review of the harness and the Stop wait, then extend `tests/live/run.js` with round 10's E–F (MCP + hooks, install with a chat open; keep within 8 messages), Claude desktop only for card screenshots (G), then the 0.5.1 release PR (Codex xhigh review first). Decide whether the panel should tell users that Local chats get no memory.
+6. Next: Codex review of the harness and the Stop wait, then extend `tests/live/run.js` with round 10's E–F (MCP + hooks, install with a chat open; keep within 8 messages), Claude desktop only for card screenshots (G), then the 0.5.1 release PR (Codex xhigh review first). The Copilot card now says the hooks run only in Copilot CLI chats (not Local); the 0.5.1 README/CHANGELOG must say it too.
 
 ## How we work (user's preferences)
 - Reply in Polish; docs in English. Ask before outward or destructive actions (pushes to other repos, history rewrites, deleting memory).

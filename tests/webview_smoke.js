@@ -142,10 +142,12 @@ panel.send({ type: 'state', state: withCopilotHooks('missing', 'copilot'), root:
 if (!button(copilotCard(), 'Install hooks') || !button(copilotCard(), 'Disconnect') || button(copilotCard(), 'Connect memory')) failures.push('panel: Copilot with tools only');
 panel.send({ type: 'state', state: withCopilotHooks('ok', 'copilot'), root: '/p' });
 if (!copilotCard().textContent.includes('Memory hooks and tools on') || button(copilotCard(), 'Install hooks')) failures.push('panel: Copilot with hooks and tools');
+if (!copilotCard().textContent.includes('not in Local ones')) failures.push('panel: Copilot with hooks and tools does not say Local chats run no hooks');
 panel.send({ type: 'state', state: withCopilotHooks('ok', null), root: '/p' });
 check('panel, Copilot with hooks only', panel.app);
 if (button(copilotCard(), 'Install hooks') || copilotCard().textContent.includes('does not share memory')) failures.push('panel: Copilot with hooks only shows a warning');
 if (!button(copilotCard(), 'Connect memory tools')) failures.push('panel: Copilot with hooks only cannot add the memory tools');
+if (!copilotCard().textContent.includes('Copilot CLI chats (Local chats get none)')) failures.push('panel: Copilot with hooks only does not say Local chats run no hooks');
 panel.send({ type: 'state', state, root: '/p' });
 panel.send({ type: 'state', state: { ...state, hooks: { claude: { state: 'missing' } } }, root: '/p' });
 check('panel, hooks missing', panel.app);

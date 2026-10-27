@@ -143,14 +143,17 @@
     if (!mcp || !mcp.agents.includes(agent.id)) return null;
     if (mcp.connected === agent.id) {
       const text = !mcp.available ? 'Memory tools on, but unavailable until AI Baton works again (see above).'
-        : info && info.state === 'ok' ? 'Memory hooks and tools on.' : 'Memory tools on: it decides when to call them (agent mode).';
+        : info && info.state === 'ok' ? 'Memory hooks and tools on. The hooks run in Copilot CLI chats, not in Local ones.'
+          : 'Memory tools on: it decides when to call them (agent mode).';
       return h('div', { class: 'small muted row' }, h('span', null, text),
         h('button', { class: 'link', onclick: () => send('disconnectMemory', { agent: agent.id }),
           title: 'Stop offering AI Baton\'s MCP server to this agent' }, 'Disconnect'));
     }
     if (agent.hooks) {
-      // Hooks only (or not installed yet, which hookWarning covers): the tools stay one quiet click away.
-      return info && info.state === 'ok' ? h('div', { class: 'small muted row' }, h('span', null, 'Memory hooks on.'),
+      // Hooks only (or not installed yet, which hookWarning covers): the tools stay one quiet click away. Copilot runs
+      // hooks only in its Copilot CLI chats (seen live, tests/live); a Local chat gets no memory from them.
+      return info && info.state === 'ok' ? h('div', { class: 'small muted row' },
+        h('span', null, 'Memory hooks on, in Copilot CLI chats (Local chats get none).'),
         h('button', { class: 'link', onclick: () => send('connectMemory', { agent: agent.id }),
           title: 'Also give it AI Baton\'s memory tools (an MCP server run by this extension), e.g. to search older checkpoints' },
         'Connect memory tools')) : null;
