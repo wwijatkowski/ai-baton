@@ -47,7 +47,7 @@ MAX_RECEIPTS = 500
 # Stop waits this long for a reply it has not saved yet.
 COPILOT_REPLY_WAIT = 2.0
 COPILOT_PERSIST_RESERVE = 1.5  # Seconds of the Stop budget kept for writing, after the change capture.
-COPILOT_STOP_LOCKS = 16
+COPILOT_STOP_LOCKS = 64
 # The whole Copilot Stop (wait, lock, change capture) ends by then, inside the hook's 10 s: git is skipped after it.
 COPILOT_STOP_BUDGET = 7.0
 HANDOFF_DOC = 'docs/AGENT_HANDOFF.md'
@@ -438,17 +438,20 @@ def run_copilot(mem, root, event, session_id, payload):
 def save_copilot_reply(mem, root, transcript, session_id, deadline):
     """Save this chat's newest reply once. Its Stops take turns under a lock of their own (parallel chats do not wait
     for each other's git; a killed Stop's lock goes with its process): the transcript is read again inside, so a
-    repeated or older Stop finds the reply saved and touches nothing, snapshots included. The receipt is written last:
-    a Stop that dies before it leaves the reply to be saved by the next one."""
-    with file_lock(stop_lock(mem, session_id), timeout=lock_time(deadline)):
+    repeated or older Stop finds the reply saved and touches nothing, snapshots included. The checkpoint and its
+    receipt are written together under the lock all chats share, so chats never put an older checkpoint over a newer
+    one. At least once: a Stop that dies before the receipt leaves the reply to the next Stop, which saves it again
+    (a second history entry) rather than losing it."""
+    # The whole budget: another chat on the same lock file may be capturing.
+    with file_lock(stop_lock(mem, session_id), timeout=lock_time(deadline, usual=COPILOT_STOP_BUDGET)):
         found = copilot_reply(transcript, session_id)
         if not found or copilot_saved(mem, session_id) == found['message_id']:
             return
         captured = capture_changes(mem, root, 'copilot', now_iso(), deadline - COPILOT_PERSIST_RESERVE)
-        save_checkpoint(mem, root, 'copilot', {'session_id': session_id, 'last_assistant_message': found['reply']},
-                        client=found['client'], extra={'message_id': found['message_id']}, deadline=deadline,
-                        found=captured)
-        with file_lock(mem / '.copilot-stop.lock', timeout=lock_time(deadline)):  # The receipts of every chat.
+        with file_lock(mem / '.copilot-stop.lock', timeout=lock_time(deadline)):
+            save_checkpoint(mem, root, 'copilot', {'session_id': session_id, 'last_assistant_message': found['reply']},
+                            client=found['client'], extra={'message_id': found['message_id']}, deadline=deadline,
+                            found=captured)
             set_receipt(mem, session_id, found['message_id'], deadline)
 
 

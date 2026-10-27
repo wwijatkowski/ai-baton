@@ -883,25 +883,68 @@ class CopilotHooksTest(unittest.TestCase):
         self.assertEqual(read_json(self.project / '.agent-memory' / 'copilot.json')['message_id'], 'm1')
 
     def test_windows_write_retries_stay_within_the_budget(self):
-        path = self.transcript('s', copilot_events('x', ('final_answer', 'Done.', 'm1'), session='s'))
         real = os.replace
-        refused = []
+        for held in ('exclude', 'attributes'):  # Shadow metadata another process keeps open: the file list instead.
+            path = self.transcript(held, copilot_events('x', ('final_answer', f'Done {held}.', f'm-{held}'), session=held))
+            refused = []
 
-        def replace(src, dst, *args, **kwargs):
-            # Files another process keeps open: the shadow metadata and the checkpoint, after the capture began.
-            if Path(dst).name in ('exclude', 'attributes', 'copilot.json'):
-                refused.append(Path(dst).name)
-                raise PermissionError('in use')
-            return real(src, dst, *args, **kwargs)
-        started = time.monotonic()
-        with mock.patch.object(project, 'WINDOWS', True), mock.patch.object(hook, 'COPILOT_STOP_BUDGET', 2), \
-                mock.patch.object(hook, 'COPILOT_PERSIST_RESERVE', 1), mock.patch.object(project.os, 'replace', replace):
+            def replace(src, dst, *args, **kwargs):
+                if Path(dst).name == held:
+                    refused.append(time.monotonic())
+                    raise PermissionError('in use')
+                return real(src, dst, *args, **kwargs)
+            started = time.monotonic()
+            with mock.patch.object(project, 'WINDOWS', True), mock.patch.object(hook, 'COPILOT_STOP_BUDGET', 1.6), \
+                    mock.patch.object(hook, 'COPILOT_PERSIST_RESERVE', 1.3), mock.patch.object(project.os, 'replace', replace):
+                self.stop(held, path)
+            saved = read_json(self.project / '.agent-memory' / 'copilot.json')
+            self.assertEqual((saved['message_id'], saved['changes']['kind']), (f'm-{held}', 'files'), held)
+            # Retries stopped at the capture's deadline (0.3 s in), not after the usual 20 tries (about 1 s).
+            self.assertLess(refused[-1] - started, 0.6, held)
+            self.assertLess(len(refused), 15, held)
+
+    def test_a_stop_that_dies_before_its_receipt_saves_again(self):
+        path = self.transcript('s', copilot_events('x', ('final_answer', 'Done.', 'm1'), session='s'))
+        with mock.patch.object(hook, 'set_receipt', side_effect=PermissionError('in use')), self.assertRaises(PermissionError):
+            self.stop('s', path)
+        self.stop('s', path)  # At least once: saved again, never lost.
+        self.stop('s', path)  # Now with its receipt: not again.
+        history = (self.project / '.agent-memory' / 'history.jsonl').read_text()
+        self.assertEqual(history.count('"message_id": "m1"'), 2)
+
+    def test_chats_sharing_a_lock_file_both_save(self):
+        import threading
+        ids, slot = [], None
+        for n in range(1000):  # Two conversations whose Stops use the same lock file.
+            if slot is None:
+                slot = hook.stop_lock(Path('m'), f'c{n}')
+                ids.append(f'c{n}')
+            elif hook.stop_lock(Path('m'), f'c{n}') == slot:
+                ids.append(f'c{n}')
+                break
+        paths = {sid: self.transcript(sid, copilot_events(sid, ('final_answer', f'Answer {sid}.', f'm{sid}'), session=sid))
+                 for sid in ids}
+        real = hook.changes.capture
+
+        def slow(*args, **kwargs):
+            time.sleep(3.5)  # Longer than the usual lock wait.
+            return real(*args, **kwargs)
+        errors = []
+
+        def stop(sid):
             try:
-                self.stop('s', path)
-            except PermissionError:
-                pass  # The CLI reports it; what matters is the time.
-        self.assertLess(time.monotonic() - started, 3)
-        self.assertIn('copilot.json', refused)
+                self.stop(sid, paths[sid])
+            except Exception as error:  # noqa: BLE001 (reported below)
+                errors.append(error)
+        with mock.patch.object(hook.changes, 'capture', slow):
+            threads = [threading.Thread(target=stop, args=(sid,)) for sid in ids]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(errors, [])
+        history = (self.project / '.agent-memory' / 'history.jsonl').read_text()
+        self.assertTrue(all(f'Answer {sid}.' in history for sid in ids), ids)
 
     def test_stop_keeps_its_budget_while_a_lock_is_held(self):
         path = self.transcript('s', copilot_events('x', ('final_answer', 'Done.', 'm1'), session='s'))
