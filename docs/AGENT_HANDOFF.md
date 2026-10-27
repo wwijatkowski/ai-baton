@@ -2,7 +2,7 @@
 
 A short, current state of the work for the next agent. Replace outdated content; do not keep history here (that is what Git and `docs/knowledge/` are for).
 
-**Last updated:** 2026-10-27 (night), Claude
+**Last updated:** 2026-10-28, Claude
 
 ## Current state
 AI Baton 0.5.0 (preview) is PUBLISHED on the VS Code Marketplace and Open VSX (`wwijatkowski.ai-baton`, 2026-10-27; every release since v0.4.0 is published by `release.yml` from its version tag, with a GitHub release holding the .vsix). The repo `github.com/wwijatkowski/ai-baton` is public.
@@ -19,7 +19,8 @@ AI Baton 0.5.0 (preview) is PUBLISHED on the VS Code Marketplace and Open VSX (`
   - Review fixes: model typed by hand ("Other model…"); Claude reviews use `--session-id` recorded in `~/.cache/ai-baton/review-sessions.json` so they never set "last used" (tokens still counted); the CLI installs into `versions/<version>-<BUILD>` (content hash), so a test .vsix with the same version updates `~/.ai-baton`; `tests/vscode/suite.js` expects that.
   - A purple "reviewing" badge while an agent runs `baton review` (`.agent-memory/reviews.json`, best effort, never touches checkpoints/activity).
 - Live Copilot harness (`tests/live/`, 2026-10-27, branch `copilot-hooks`): `node tests/live/run.js setup` once (GitHub sign-in in its own profile, `~/.cache/ai-baton/live`; the test HOME links the real `~/Library/Keychains`: the login keychain is shared with your account, the token sits encrypted in the test profile, `clean` does not remove keychain items), then `round` (4 Copilot messages, cap 8). Verified with it, all assertions green: the SessionStart context reaches the model (random codename only in a Codex checkpoint), SessionStart runs on every turn as `resume` (also after a reload), so later turns get newer checkpoints; every reply saved once; a new chat gets the newest context. It found a real bug, fixed: Copilot runs Stop before the final answer reaches events.jsonl, so 3 of 4 replies were lost; Stop now waits up to 2 s for an unsaved reply (`COPILOT_REPLY_WAIT`), and the whole Copilot Stop has one 7 s deadline (`COPILOT_STOP_BUDGET`: lock and git change capture included; past it git is skipped). Codex review (high) of the harness: all 7 points accepted and in (exact save checks, per-turn hook checks, t2/t3 as assertions, quit outside the chat queue, bounded kill, runner lock, strict parser with `tests/live/events_test.js`).
-- Hooks run only in **Copilot CLI** chats (`copilotcli`, the copilot-agent runtime); a "Local" chat runs none. Not yet verified live: Install hooks with a chat open, hooks plus MCP tools together, the card UI (round 10 parts E–G).
+- Hooks run only in **Copilot CLI** chats (`copilotcli`, the copilot-agent runtime); a "Local" chat runs none.
+- 2026-10-28: the harness also covers round 10 E–F (7 messages a round), all green: t5 hooks + MCP tools (the test chat auto-approves tools via `chat.permissions.default`, set only for that chat; baton_context with the hook's session_id says the Stop hook saves, no baton_checkpoint call, one save); t6 hooks removed: no hook runs, nothing saved; t7 hooks installed with that chat open: its next turn runs SessionStart, knows the newest codename and is saved (INFO). Release bump 0.5.1 (README section "GitHub Copilot", CHANGELOG, install toast) committed on `copilot-hooks`.
 
 ## Next steps (in this order)
 Releasing (no stored tokens, see 1): bump the version and add a CHANGELOG section in a PR, merge, then `git tag vX.Y.Z && git push origin vX.Y.Z`. `release.yml` then tests, publishes to both stores and creates the GitHub release; the stores show the new version about 5 minutes later.
@@ -31,7 +32,7 @@ Releasing (no stored tokens, see 1): bump the version and add a CHANGELOG sectio
 3. Publisher display name (waiting for VSMarketplace@microsoft.com). The user does not want promotional posts for now.
 4. Listing (0.4.1, released): display name "AI Baton: Claude Code & Codex memory, handoff, review" for Marketplace search (it weighs the name most; the id stays, so it can go back to "AI Baton" any time), wider keywords, Cursor/Windsurf via Open VSX in the description. The README starts with `media/screenshots/demo.gif` (33 s, 1.6 MB): recorded by Claude desktop with `screencapture -v` in a throwaway project, cut and sped up with ffmpeg; the raw video is `~/Movies/ai-baton-demo.mov`.
 5. Done: 0.5.0 released; Copilot hooks built on `copilot-hooks`.
-6. Next: Codex review of the harness and the Stop wait, then extend `tests/live/run.js` with round 10's E–F (MCP + hooks, install with a chat open; keep within 8 messages), Claude desktop only for card screenshots (G), then the 0.5.1 release PR (Codex xhigh review first). The Copilot card now says the hooks run only in Copilot CLI chats (not Local); the 0.5.1 README/CHANGELOG must say it too.
+6. Next: the 0.5.1 release PR from `copilot-hooks` (Codex xhigh review of the whole branch first; accepted points in, then merge and tag v0.5.1). Card screenshots (round 10 G) by Claude desktop from the prompt given to the user (report as round 10 in `docs/UI_TEST_REPORT.md`).
 
 ## How we work (user's preferences)
 - Reply in Polish; docs in English. Ask before outward or destructive actions (pushes to other repos, history rewrites, deleting memory).
