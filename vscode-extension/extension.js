@@ -224,7 +224,8 @@ async function installHooks(ids) {
   }
   if (ids.includes('codex')) approveHooks('codex');
   if (ids.includes('copilot')) {
-    vscode.window.showInformationMessage('Copilot hooks installed. New Copilot chats in agent mode get the shared context, and their turns are saved by themselves.');
+    vscode.window.showInformationMessage('Copilot hooks installed. Copilot CLI chats get the shared context from their next message, open ones too, and ' +
+      'their turns are saved by themselves. Local chats run no hooks.');
   }
   refreshAll();
   return true;
