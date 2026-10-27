@@ -408,7 +408,7 @@ test('Ask for review without any conversation goes straight to the reviewer', as
   await h.start();
   await h.commands['aiBaton.askForReview']();
   assert.ok(!h.dialogs.some((d) => /\(1\/3\)/.test(d.text)));
-  assert.match(h.placeholder, /No agent conversation in this project yet/);
+  assert.match(h.placeholder, /No conversation here yet/);
 });
 
 test('Ask for review with another model and effort, offered again next time', async (h) => {
