@@ -638,7 +638,7 @@ async function askForReview(preset) {
   let pick = await vscode.window.showQuickPick(items,
     { title: `Ask for review (2/3): who reviews${session ? ` ${label(author)}'s work` : ''}?`,
       placeHolder: sessions.length || session ? undefined
-        : 'No agent conversation in this project yet, so the reviewer gets the current changes without an author.',
+        : 'No conversation here yet: the reviewer gets the current changes.',
       ignoreFocusOut: true });
   if (!pick) return;
   if (pick.choose) {

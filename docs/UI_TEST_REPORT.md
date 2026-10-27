@@ -439,3 +439,53 @@ Date: 2026-10-26, 14:38–14:40 local. Tested by Claude (Claude desktop, compute
 
 - `~/baton-test6`: recreated, `git init` (no commits), initialized by AI Baton. Its window has two empty "Claude Code" editor tabs and Claude Code in the side bar. No messages were sent.
 - The only file edited by the tester is this report.
+
+# Round 7: reviewer with model and effort, one agent across conversations (2026-10-27)
+
+Tester: Claude desktop (computer use, click-only in VS Code; the user pressed Enter/Esc and typed the two Claude messages). Extension `wwijatkowski.ai-baton` 0.4.1 built from the new code, installed from a .vsix. Project: `~/baton-test-review` (`git init`, one commit with a one-line README.md), trusted, Reload Window, Initialize project, then a second README line left uncommitted.
+
+## Summary
+
+| # | Check | Result |
+|---|-------|--------|
+| 0 | New code actually runs after installing the .vsix | FAIL (CLI not updated; worked around, see details) |
+| A1–A2 | Ask for review; step 1/3 | PASS (step 1 skipped: no conversation in the project yet) |
+| A3 | Step 2/3 lists each agent as configured plus "another model or effort…" | PASS |
+| A4 | Claude: another model or effort… → Haiku → low → Enter | PASS (after the workaround) |
+| A5 | "Claude (Haiku · low)" notification and Markdown tab with 3+ points | PASS |
+| A6 | Next Ask for review offers "Claude · Haiku · low — last used for review" | PASS |
+| A7 | Codex: another model or effort… → Default; efforts match the configured model | PASS |
+| A8 | Cancelled Codex choice is not remembered | PASS |
+| B | A new Claude conversation knows the previous one's fact without reading files | PASS |
+
+## Details
+
+**0 FAIL: the new CLI was not installed.** The first review run ended with the notification "Review failed: usage: baton [-h] {hook,install-hooks,uninstall-hooks,…". The extension's bundled CLI (`~/.vscode/extensions/wwijatkowski.ai-baton-0.4.1/cli`) has `--model`/`--effort`, but `~/.ai-baton/versions/0.4.1` still held the released 0.4.1 CLI (dated 2026-10-26 23:54; `cli.py`, `hook.py`, `review.py` and `templates/agents_block.md` differed), whose `baton review -h` shows only `--agent --commit --focus --session --path --json`. Cause: the test .vsix has the same version (0.4.1) as the installed CLI, and `cli-install.js` skips the copy when `current-version` already names that version. Released versions are bumped, so users are not affected, but every same-version test build silently keeps the old CLI (and old hooks). With the user's approval the tester copied the bundled CLI over `~/.ai-baton/versions/0.4.1` (`diff -rq` identical afterwards, `review -h` then listed `--model MODEL --effort EFFORT`). Suggestion: bump the version for test builds, or let the installer compare content (e.g. a build hash) instead of the version string. The failed run left no "last used for review" entry (correct: only successful runs are remembered).
+
+**A1–A2 PASS.** Ask for review opened directly at "Ask for review (2/3): who reviews?" with the placeholder "No agent conversation in this project yet, so the reviewer gets the current changes without an a[uthor…]" (cut by the box width), so there was no "No particular conversation" choice to make.
+
+**A3 PASS.** Entries: "Claude default (last used: Opus 5.5)", "Claude: another model or effort…", "Codex default (GPT-6.1-Sol)", "Codex: another model or effort…". Screenshot kept by the tester (not committed).
+
+**A4 PASS.** Model step "Claude reviews with which model?" (hint "For this review only; new conversations keep their settings."): Default (default (last used: Opus 5.5)), Opus opus, Sonnet sonnet, Haiku haiku, Fable claude-fable-5-1[1m] ("Fable 5.1 · Most capable for your hardest and longest-running tasks"). Effort step "Claude · Haiku reviews with which effort?" (hint "Higher effort looks deeper and uses more of your plan."): Default, low, medium, high, xhigh. Step 3/3 "Ask for review (3/3): anything to look at closely?" with "Claude gets the changes (or, if no files changed, the conversation's replies) plus the latest summary and the handoff…". The user pressed Enter.
+
+**A5 PASS.** The tester did not see the progress notification itself (it was on screen while the user pressed Enter). About a minute later: notification "Claude (Haiku · low)'s review is ready." with **Copy review** (no Send to, since there was no author conversation), and an Untitled Markdown tab "# Review by Claude (Haiku · low)", "- Reviewed: the uncommitted changes", "Ranked by importance:" with at least 4 numbered points (1. unrelated README.md line 2; 2. handoff does not record the work; 3. decision entry misses "who decided"; 4. handoff `@`-imported into CLAUDE.md). The review's Claude transcript (`~/.claude/projects/-Users-wiktorwijatkowski-baton-test-review/f9217faa….jsonl`) shows `claude-haiku-5-5`, so the model really was Haiku. It saved no checkpoint (history has only the two test B turns).
+
+**A6 PASS.** Step 2/3 then listed: "Claude default (last used: Opus 5.5)", "Claude · Haiku · low  last used for review", "Claude: another model or effort…", "Codex default (GPT-6.1-Sol)", "Codex: another model or effort…". Instead of Esc, the tester continued from this open picker with A7 (same step, one fewer reopen).
+
+**A7 PASS.** "Codex reviews with which model?": Default (default (GPT-6.1-Sol)), GPT-6.1-Sol, GPT-6-Astra, GPT-6.1 Terra, GPT-6-Sol, GPT-6-Luna, GPT-5.6-Sol, GPT-5.6-Terra, … Default → "Codex reviews with which effort?": Default, low, medium, high, xhigh, max, ultra. That matches `~/.codex/models_cache.json` for gpt-6.1-sol (low, medium, high, xhigh, max, ultra); `config.toml` sets no model, so the default is gpt-6.1-sol. Picked low; at step 3/3 the user pressed Esc.
+
+**A8 PASS.** The next Ask for review showed the same five entries as in A6: no "last used for review" entry for Codex. Closed with Esc by the user.
+
+**B PASS.** In the side bar Claude Code (new "Untitled" conversation, Opus 5.5) the user sent "Zapamiętaj: kolor projektu to zielony. Odpowiedz jednym zdaniem." Claude also wrote the fact into `docs/knowledge/DECISIONS.md` (Bash `ls docs/knowledge/`, Edit DECISIONS.md, reply "Zapisałem w docs/knowledge/DECISIONS.md, że kolor projektu to zielony, więc inni agenci też to zobaczą."). The Claude card then showed "Checkpoint just now · master @ 8e34ed4". **New chat** on the Claude card opened a second conversation in an editor tab; the user asked "Jaki jest kolor projektu według poprzedniej rozmowy? Nie czytaj żadnych plików, odpowiedz na podstawie kontekstu, który dostałeś na starcie." Reply: "Według checkpointu z poprzedniej rozmowy (2026-10-27, 10:27 UTC) kolorem projektu jest **zielony**. … Zgodnie z prośbą nie otwierałem tego pliku…". Its transcript has no tool calls, and its start context contains "[claude, your other conversation] 2026-10-27 10:27 UTC · branch master @ 8e34ed4", so the answer came from the hook, not from DECISIONS.md. Recent work then showed 2 entries.
+
+## Other observations (round 7)
+
+1. Right after the Haiku review, the Claude card's model picker briefly read "Default (last used: Haiku…"; a few seconds later it was back to "Default (last used: Opus 5.5)". The review's own transcript in the project's Claude folder is the likely source of "last used". Harmless here, but a review run should probably not count as the agent's last-used model, even for a moment.
+2. The step 2/3 placeholder "No agent conversation in this project yet, so the reviewer gets the current changes without an a…" is cut off in the quick pick; a shorter text would fit.
+3. Claude, asked only to "remember" a fact, edited `docs/knowledge/DECISIONS.md` on its own. That follows AGENTS.md ("add lasting decisions"), but it also means a memory test can be answered from files; here the transcript proved it was not.
+
+## State left behind (round 7)
+
+- `~/.ai-baton/versions/0.4.1` now holds the CLI bundled in the test .vsix (copied with the user's approval); it is what the installer would have put there for a new version.
+- `~/baton-test-review`: deleted after the test, together with its VS Code window (the Untitled review tab closed without saving). Its Claude transcripts remain in `~/.claude/projects/-Users-wiktorwijatkowski-baton-test-review/` (Claude's own data, not removed).
+- The only file in this repo edited by the tester is this report. Nothing committed.

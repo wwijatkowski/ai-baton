@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.2 (preview)
 
 - A new chat gets the agent's own latest checkpoint from its other conversations, not only other agents' checkpoints: one agent alone carries its work into the next chat, and parallel chats see each other's progress.
 - Ask for review: any agent can review, as configured or with another model and effort for that review only (e.g. a cheap model for everyday changes, a strong one for big ones). The last choice per agent is offered again. CLI: `baton review --agent claude --model opus --effort high`.
