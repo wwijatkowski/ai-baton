@@ -19,12 +19,12 @@ One place to switch between coding agents on a project without losing context or
 - Dogfooding AI Baton on this repo.
 
 ## To do
-1. Done: 0.4.0 preview published on the VS Code Marketplace and Open VSX (2026-10-26) by `release.yml` from a version tag. Left: Marketplace publishing without a PAT before 2026-12-01, Open VSX trusted publishing, publisher display name.
+1. Done: 0.4.1 published on the VS Code Marketplace and Open VSX by `release.yml` from a version tag, with no stored tokens (Azure managed identity, Open VSX trusted publishing). Left: publisher display name.
 2. Shared memory for agents without hooks (Copilot, Cline, Gemini, Continue, ...), one approach for all:
    - Main path: a local MCP server (`baton mcp`, stdio, no network) with tools `baton_context` (what the hooks inject at start) and `baton_checkpoint` (save a summary at the end). Most agents speak MCP; AGENTS.md tells them to call the tools. Checkpoints land in the same history, so Recent work and other agents see them.
    - Fallback: the extension infers a checkpoint when the handoff doc or git changes while a hook-less agent was the last one opened (marked as inferred).
    - Per agent, use native hooks where they exist (check each agent's docs when adding it).
-3. Idea: give an agent its own latest checkpoint when it starts a new chat (today hooks deliver only the other agents' checkpoints; the same agent relies on the handoff docs).
+3. Done (unreleased): an agent gets its own latest checkpoint from its other conversations (new chat, or one running in parallel); review by any agent with a model and effort for that review only. Small idea left: let the panel take a model id typed by hand (the CLI already does).
 4. More reviewers for `baton review`: agents with a headless CLI (check Gemini CLI, Copilot CLI) get a runner in `review.py` and `"review"` in the registry; panel-only agents (Cline, Continue) cannot review.
 5. Done (0.4.0): Windows support, CI on Linux/Windows/macOS (unit tests plus the extension in a real VS Code), extension.js flow tests with a fake VS Code API, activity per conversation. Left: a manual check with the real Claude and Codex extensions on Windows.
 6. Measure whether project memory saves tokens (tokens spent before real work starts, before vs after init).

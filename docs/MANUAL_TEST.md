@@ -38,7 +38,7 @@ Automated with the real agents: `sh tests/e2e_agents.sh` (Claude CLI and `codex 
 ## 5b. Ask for review
 1. Make a small uncommitted change. Click **Ask for review** (or **Ask for review** on an expanded Recent work entry, which skips step 1).
    - Step 1/3 "whose work?": recent conversations (agent, time, replies, summary), up to 20, plus "No particular conversation". Pick the one that made the change.
-   - Step 2/3 "who reviews?": the other agent comes first; the author is marked "wrote this (self-review)".
+   - Step 2/3 "who reviews?": the other agent comes first; the author is marked "wrote this (self-review)". Each agent shows its configured model; "another model or effort…" asks for a model, then an effort (for this review only). The next review offers that choice again ("last used for review"), and the review tab's title names it, e.g. "Review by Claude (Sonnet · low)".
    - Step 3/3: optional focus; Enter starts.
    Expect: progress notification; after about a minute a Markdown tab beside ("Work of: <agent>, conversation from …"); the notification offers **Send to <author>** (the chosen conversation) and **Copy review**.
 2. **Send to <author>**: the chosen conversation opens and one short message says the review is copied. Paste and send: the author lists accept/reject/defer per point, ends with how to answer, and changes nothing until you reply "ok".

@@ -52,6 +52,7 @@ class Harness {
     this.config = { home: CLI_HOME, python: 'python3', refreshSeconds: 3600, usageDays: 14 };
     this.pending = 0;
     this.hung = [];
+    this.memento = {};  // The extension's globalState.
   }
 
   // The user's answer to the next dialog of `kind` whose text matches `match` (used once).
@@ -204,7 +205,9 @@ class Harness {
     } finally {
       Module._load = load;
     }
-    this.context = { extensionPath: path.dirname(EXTENSION), extensionUri: vscode.Uri.file(path.dirname(EXTENSION)), subscriptions: [] };
+    const memento = this.memento;
+    this.context = { extensionPath: path.dirname(EXTENSION), extensionUri: vscode.Uri.file(path.dirname(EXTENSION)), subscriptions: [],
+      globalState: { get: (key) => memento[key], update: async (key, value) => { memento[key] = value; } } };
     await this.extension.activate(this.context);
     if (this.provider) {
       this.provider.resolveWebviewView({
@@ -406,6 +409,52 @@ test('Ask for review without any conversation goes straight to the reviewer', as
   await h.commands['aiBaton.askForReview']();
   assert.ok(!h.dialogs.some((d) => /\(1\/3\)/.test(d.text)));
   assert.match(h.placeholder, /No agent conversation in this project yet/);
+});
+
+test('Ask for review with another model and effort, offered again next time', async (h) => {
+  h.cli.models = () => ({ claude: { model: '', effort: 'high', efforts: ['low', 'medium', 'high'], defaultLabel: 'set by your plan',
+    options: [{ value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' }] } });
+  let reviewers;
+  h.on('pick', /\(1\/3\)/, pickSession('claude-s1'));
+  h.on('pick', /\(2\/3\)/, (items) => { reviewers = items; return items.find((i) => i.choose && i.agent.id === 'claude'); });
+  h.on('pick', /Claude reviews with which model/, (items) => {
+    assert.strictEqual(items[0].label, 'Default (default (set by your plan) · high)');
+    return items.find((i) => i.value === 'sonnet');
+  });
+  h.on('pick', /Claude · Sonnet reviews with which effort/, (items) => {
+    assert.deepStrictEqual(items.map((i) => i.label), ['Default (high)', 'low', 'medium', 'high']);
+    return items[1];
+  });
+  h.on('input', /\(3\/3\)/, '');
+  await h.start();
+  await h.commands['aiBaton.askForReview']();
+  // Codex has no model settings here: it is offered as configured only.
+  assert.deepStrictEqual(reviewers.map((r) => [r.agent.id, !!r.choose]), [['codex', false], ['claude', false], ['claude', true]]);
+  assert.deepStrictEqual(h.cliArgs('review')[0], ['review', '--json', '--agent', 'claude', '--path', ROOT,
+    '--model', 'sonnet', '--effort', 'low', '--session', 'claude-s1']);
+  assert.match(h.documents[0].content, /^# Review by Claude \(Sonnet · low\)\n/);
+
+  h.on('pick', /\(1\/3\)/, pickSession('claude-s1'));
+  h.on('pick', /\(2\/3\)/, (items) => items.find((i) => i.label === '$(history) Claude · Sonnet · low'));
+  h.on('input', /\(3\/3\)/, '');
+  await h.commands['aiBaton.askForReview']();
+  assert.deepStrictEqual(h.cliArgs('review')[1].slice(6, 10), ['--model', 'sonnet', '--effort', 'low']);
+});
+
+test('a review choice is remembered only once the review has run', async (h) => {
+  h.cli.models = () => ({ codex: { model: 'mini', effort: '', efforts: ['low', 'high'], defaultLabel: '',
+    options: [{ value: 'mini', label: 'Mini', efforts: ['low'] }, { value: 'big', label: 'Big', efforts: ['low', 'high'] }] } });
+  h.on('pick', /\(1\/3\)/, pickSession('claude-s1'));
+  h.on('pick', /\(2\/3\)/, (items) => items.find((i) => i.choose));
+  h.on('pick', /Codex reviews with which model/, (items) => items[0]);
+  // "Default" runs the configured model, so only its efforts are offered.
+  h.on('pick', /Codex reviews with which effort/, (items) => { h.efforts = items.map((i) => i.value); return items[1]; });
+  h.on('input', /\(3\/3\)/, undefined);
+  await h.start();
+  await h.commands['aiBaton.askForReview']();
+  assert.deepStrictEqual(h.efforts, ['', 'low']);
+  assert.strictEqual(h.cliArgs('review').length, 0);
+  assert.deepStrictEqual(h.memento, {}, 'cancelled before running: nothing remembered');
 });
 
 test('a failed review is shown as an error', async (h) => {

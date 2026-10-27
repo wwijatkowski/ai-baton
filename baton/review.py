@@ -1,4 +1,4 @@
-"""`baton review`: ask another agent for a second opinion on the current changes.
+"""`baton review`: ask another agent (or the same one with another model or effort) for a second opinion.
 
 The reviewer gets the diff, the goal of the change and a prompt that asks for a ranked critique; plain
 "review" modes (e.g. `codex exec review`) only report high-confidence bugs and mostly say "no findings".
@@ -22,7 +22,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import changes
+from . import changes, models
 from .changes import BASELINE_REF, SHADOW_CONFIG, SHADOW_DIR
 from .project import MEMORY_DIR, agent_binary, find_root, kill_tree, load_agents, read_json, write_text
 from .recall import entries
@@ -335,8 +335,9 @@ def run(command, root, stdin):
     return proc.returncode, out, err
 
 
-def run_reviewer(kind, root, prompt, diff, notes='', block='diff'):
-    """The prompt stays small and fixed on the command line; the diff (or replies) and notes go through stdin."""
+def run_reviewer(kind, root, prompt, diff, notes='', block='diff', model='', effort=''):
+    """The prompt stays small and fixed on the command line; the diff (or replies) and notes go through stdin.
+    `model` and `effort` apply to this run only; empty keeps what the user configured for the agent."""
     exe = binary(kind)
     if not exe:
         raise ReviewError(f'{kind} CLI not found')
@@ -350,12 +351,16 @@ def run_reviewer(kind, root, prompt, diff, notes='', block='diff'):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / 'last.md'
             # Read-only sandbox and never ask for approval, whatever the user's config says.
-            code, _, err = run([exe, 'exec', '--sandbox', 'read-only', '-c', 'approval_policy="never"',
+            choice = ([f'--model={model}'] if model else []) + \
+                (['-c', f'model_reasoning_effort="{effort}"'] if effort else [])
+            code, _, err = run([exe, 'exec', '--sandbox', 'read-only', '-c', 'approval_policy="never"', *choice,
                                 '--skip-git-repo-check', '-o', str(out), prompt], root, stdin)
             text = out.read_text(encoding='utf-8') if out.exists() else ''
     else:
         # --tools limits which tools exist (not just which are allowed), so user settings cannot widen it.
-        code, text, err = run([exe, '-p', prompt, '--tools', 'Read,Grep,Glob', '--strict-mcp-config'], root, stdin)
+        choice = ([f'--model={model}'] if model else []) + ([f'--effort={effort}'] if effort else [])
+        code, text, err = run([exe, '-p', prompt, '--tools', 'Read,Grep,Glob', '--strict-mcp-config', *choice],
+                              root, stdin)
     if code != 0:
         # Never pass a failed or partial run off as a review.
         raise ReviewError(f'{kind} failed (exit {code}): {(err or text).strip()[-300:]}')
@@ -414,22 +419,47 @@ def author_context(project, session=None):
     return '\n\n'.join(parts)
 
 
-def review(start, agent, goal=None, commit=None, focus=None, session=None):
+def review(start, agent, goal=None, commit=None, focus=None, session=None, model=None, effort=None):
     # A cancel at any stage (collecting the diff or reviewing) stops whatever is running, then exits.
     previous = {sig: signal.signal(sig, cancel) for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
-        return reviewed(start, agent, goal, commit, focus, session)
+        return reviewed(start, agent, goal, commit, focus, session, model, effort)
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
 
 
-def reviewed(start, agent, goal, commit, focus, session):
+def reviewer_choice(reviewer, model, effort):
+    """Check a model and effort for one review run (the agent's own settings stay as they are); empty or 'default'
+    means what the user configured. Any model id is passed on (the agent knows its models best), but never one that
+    could be read as a flag; the effort must be one the agent offers."""
+    model, effort = ('' if v in (None, 'default') else v.strip() for v in (model, effort))
+    for value in (model, effort):
+        if value.startswith('-') or not models.VALUE_RE.match(value):
+            raise ReviewError(f'Invalid model or effort: {value!r}')
+    provider = models.PROVIDERS.get(reviewer.get('models'))
+    if effort and provider:
+        try:
+            info = provider[0]()
+        except (models.ModelError, OSError):
+            info = {}
+        # Without a model of its own the review runs on the configured one (else the agent's default): check that one.
+        effective = model or info.get('model') or info.get('defaultModel') or ''
+        option = next((o for o in info.get('options', []) if o['value'] == effective), {})
+        offered = option.get('efforts') or info.get('efforts') or []
+        if offered and effort not in offered:
+            raise ReviewError(f'{reviewer["id"]}{" " + model if model else ""} does not support effort {effort!r}; '
+                              f'choose one of: {", ".join(offered)}')
+    return model, effort
+
+
+def reviewed(start, agent, goal, commit, focus, session, model=None, effort=None):
     project = find_root(start)  # AI Baton context (agents, memory, handoff) only.
     agents = load_agents(project)
     reviewer = next((a for a in agents if a['id'] == agent), None)
     if not reviewer or reviewer.get('review') not in ('codex', 'claude'):
         raise ReviewError(f'{agent} cannot review; choose one of: {", ".join(a["id"] for a in agents if a.get("review"))}')
+    model, effort = reviewer_choice(reviewer, model, effort)
     start = Path(start).resolve()
     snaps, before = session_work(project, session) if project and (session or not commit) else ([], None)
     started = (before or {}).get('changes') or {}
@@ -471,4 +501,5 @@ def reviewed(start, agent, goal, commit, focus, session):
         source=source,
         goal=goal or 'not stated; take it from the authors\' notes in the <notes> block and the diff',
         focus=f'\nThe user asks you to pay special attention to: {focus}' if focus else '')
-    return {'agent': agent, 'reviewed': what, 'review': run_reviewer(reviewer['review'], root, prompt, diff, notes, block)}
+    text = run_reviewer(reviewer['review'], root, prompt, diff, notes, block, model, effort)
+    return {'agent': agent, 'model': model, 'effort': effort, 'reviewed': what, 'review': text}

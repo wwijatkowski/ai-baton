@@ -130,7 +130,7 @@ class HookTest(unittest.TestCase):
         self.assertEqual(hook.run('claude', payload(other, 'SessionStart')), {})
 
     def test_handoff_between_agents(self):
-        self.assertIn('No other agent', context(hook.run('codex', payload(self.project, 'SessionStart', 'c1'))))
+        self.assertIn('No checkpoint from another agent', context(hook.run('codex', payload(self.project, 'SessionStart', 'c1'))))
         hook.run('claude', payload(self.project, 'UserPromptSubmit', 'k1'))
         warning = context(hook.run('codex', payload(self.project, 'UserPromptSubmit', 'c1')))
         self.assertIn('agent claude may still be active', warning)
@@ -178,7 +178,24 @@ class HookTest(unittest.TestCase):
         # Resume or compaction: same session id, fresh context window.
         again = context(hook.run('claude', payload(self.project, 'SessionStart', 's1', source='resume')))
         self.assertIn('Codex did Y', again)
-        self.assertNotIn('No other agent', again)
+        self.assertNotIn('No checkpoint from another agent', again)
+
+    def test_own_checkpoint_reaches_the_agents_other_conversations(self):
+        # One agent alone: a new chat continues from the previous one.
+        hook.run('claude', payload(self.project, 'UserPromptSubmit', 's1', prompt='a'))
+        hook.run('claude', payload(self.project, 'Stop', 's1', last_assistant_message='Claude built the login form.'))
+        new_chat = context(hook.run('claude', payload(self.project, 'SessionStart', 's2')))
+        self.assertIn('[claude, your other conversation]', new_chat)
+        self.assertIn('Claude built the login form', new_chat)
+        # The conversation that wrote it does not get it back, even after a resume.
+        self.assertNotIn('login form', context(hook.run('claude', payload(self.project, 'SessionStart', 's1', source='resume'))))
+        self.assertEqual(hook.run('claude', payload(self.project, 'UserPromptSubmit', 's1', prompt='b')), {})
+        # A conversation running in parallel sees the other one's newer work on its next prompt, once.
+        hook.run('claude', payload(self.project, 'Stop', 's1', last_assistant_message='Claude added validation.'))
+        self.assertIn('added validation', context(hook.run('claude', payload(self.project, 'UserPromptSubmit', 's2', prompt='c'))))
+        self.assertEqual(hook.run('claude', payload(self.project, 'UserPromptSubmit', 's2', prompt='d')), {})
+        # Without a session id it cannot tell its own conversations apart: its own checkpoint stays out.
+        self.assertNotIn('validation', context(hook.run('claude', payload(self.project, 'SessionStart'))))
 
     def test_empty_reply_keeps_previous_checkpoint(self):
         hook.run('codex', payload(self.project, 'Stop', last_assistant_message='First'))
@@ -713,6 +730,35 @@ class ReviewTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {'BATON_REVIEW': '1'}):
             self.assertEqual(hook.run('codex', payload(self.project, 'Stop', 'r1', last_assistant_message='A review.')), {})
         self.assertEqual(codex_file.read_text() if codex_file.exists() else None, before)
+
+    def test_reviewer_model_and_effort_for_one_run(self):
+        offered = {'efforts': ['low', 'medium', 'high'],
+                   'options': [{'value': 'mini', 'efforts': ['low']}, {'value': 'opus'}]}
+        with mock.patch.dict(models.PROVIDERS, {'claude': (lambda: offered, None), 'codex': (lambda: offered, None)}):
+            claude = review.review(self.project, 'claude', model='opus', effort='high')
+            self.assertEqual((claude['model'], claude['effort']), ('opus', 'high'))
+            self.assertIn('--model=opus --effort=high', claude['review'])
+            codex = review.review(self.project, 'codex', model='mini', effort='low')['review']
+            self.assertIn('--model=mini -c model_reasoning_effort="low"', codex)
+            # Not set: the agent runs as configured, with no extra flags.
+            plain = review.review(self.project, 'codex', model='default')
+            self.assertEqual((plain['model'], plain['effort']), ('', ''))
+            args = plain['review'].splitlines()[0]
+            self.assertNotIn('--model', args)
+            self.assertNotIn('model_reasoning_effort', args)
+            # The model's own efforts decide when it lists them, the configured model's when none is chosen; nothing
+            # that looks like a flag gets through.
+            offered['model'] = 'mini'
+            with self.assertRaises(review.ReviewError):
+                review.review(self.project, 'codex', effort='high')
+            self.assertEqual(review.review(self.project, 'codex', effort='low')['effort'], 'low')
+            del offered['model']
+            for bad in ({'model': 'mini', 'effort': 'high'}, {'effort': 'ultra'}, {'model': '--yolo'}, {'model': 'a b'}):
+                with self.assertRaises(review.ReviewError, msg=bad):
+                    review.review(self.project, 'codex', **bad)
+        out = subprocess.run([sys.executable, str(ROOT / 'bin/baton'), 'review', '--agent', 'claude', '--model=-x',
+                              '--path', str(self.project)], capture_output=True, text=True)
+        self.assertIn('Invalid model or effort', out.stderr)
 
     def test_falls_back_to_last_commit_and_rejects_unknown_reviewers(self):
         subprocess.run(['git', 'add', '-A'], cwd=self.project, check=True)
