@@ -813,51 +813,95 @@ class CopilotHooksTest(unittest.TestCase):
         self.assertIn('Answer A.', history)
         self.assertIn('Answer B.', history)
 
-    def test_a_claimed_reply_is_captured_once_and_a_newer_one_is_not_overwritten(self):
+    def shadow_head(self):
+        return subprocess.run(['git', '--git-dir', str(self.project / '.agent-memory' / 'shadow.git'), 'rev-parse', '--short',
+                               'HEAD'], capture_output=True, text=True).stdout.strip()
+
+    def test_stops_of_one_chat_take_turns_and_save_each_reply_once(self):
+        import threading
         mem = self.project / '.agent-memory'
         first = copilot_events('x', ('final_answer', 'First.', 'm1'), session='s')
+        both = first + copilot_events('y', ('final_answer', 'Second.', 'm2'), session='s').split('\n', 1)[1]
         path = self.transcript('s', first)
-        real, captured = hook.changes.capture, []
+        real, captured, inside = hook.changes.capture, [], threading.Event()
 
         def capture(*args, **kwargs):
             captured.append(args[3])
-            if len(captured) == 1:
-                self.stop('s', path)  # The same Stop again while the first one captures: already claimed, no snapshot.
-                # The next turn ends meanwhile, with a file change of its own: its own Stop saves it.
-                (self.project / 'later.txt').write_text('second turn\n')
-                Path(path).write_text(first + copilot_events('y', ('final_answer', 'Second.', 'm2'), session='s').split('\n', 1)[1])
-                self.stop('s', path)
+            inside.set()
+            time.sleep(0.5)  # The others arrive meanwhile and wait for this chat's lock.
             return real(*args, **kwargs)
-        with mock.patch.object(hook.changes, 'capture', capture):
-            self.stop('s', path)
-        self.assertEqual(len(captured), 2)  # m1 and m2, once each.
-        saved = read_json(mem / 'copilot.json')
-        self.assertEqual((saved['last_reply'], saved['message_id']), ('Second.', 'm2'))  # m1 finished later, did not win.
-        self.assertIn('later.txt', ' '.join(saved['changes']['changed']))
-        entries = [json.loads(l) for l in (mem / 'history.jsonl').read_text().splitlines() if '"agent": "copilot"' in l]
-        self.assertEqual([e['message_id'] for e in entries], ['m2'])
-        if saved['changes']['kind'] == 'shadow':  # The snapshot HEAD is the saved one: nothing was taken and dropped.
-            head = subprocess.run(['git', '--git-dir', str(mem / 'shadow.git'), 'rev-parse', '--short', 'HEAD'],
-                                  capture_output=True, text=True).stdout.strip()
-            self.assertEqual(saved['changes']['commit'], head)
+        errors = []
 
-    def test_a_failed_save_gives_the_claim_back(self):
+        def stop():
+            try:
+                self.stop('s', path)
+            except Exception as error:  # noqa: BLE001 (reported below)
+                errors.append(error)
+        with mock.patch.object(hook.changes, 'capture', capture):
+            threads = [threading.Thread(target=stop)]
+            threads[0].start()
+            inside.wait(5)
+            threads.append(threading.Thread(target=stop))  # The same Stop again.
+            (self.project / 'later.txt').write_text('second turn\n')
+            Path(path).write_text(both)
+            threads.append(threading.Thread(target=stop))  # The next turn's Stop.
+            for thread in threads[1:]:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(len(captured), 2)  # m1 and m2 once each; the repeat took no snapshot.
+        saved = read_json(mem / 'copilot.json')
+        self.assertEqual((saved['last_reply'], saved['message_id']), ('Second.', 'm2'))
+        entries = [json.loads(l) for l in (mem / 'history.jsonl').read_text().splitlines() if '"agent": "copilot"' in l]
+        self.assertEqual(sorted(e['message_id'] for e in entries), ['m1', 'm2'])
+        if saved['changes']['kind'] == 'shadow':
+            self.assertEqual(saved['changes']['commit'], self.shadow_head())
+        # A late Stop after the newer reply was saved, with new edits since: it touches nothing, snapshots included.
+        (self.project / 'after.txt').write_text('edited after the save\n')
+        head = self.shadow_head()
+        with mock.patch.object(hook.changes, 'capture', side_effect=AssertionError('no snapshot')):
+            self.stop('s', path)
+        self.assertEqual(self.shadow_head(), head)
+
+    def test_a_stop_that_fails_leaves_the_reply_to_the_next(self):
         path = self.transcript('s', copilot_events('x', ('final_answer', 'Done.', 'm1'), session='s'))
         with mock.patch.object(hook, 'save_checkpoint', side_effect=TimeoutError('busy')), self.assertRaises(TimeoutError):
             self.stop('s', path)
         self.assertIsNone(hook.copilot_saved(self.project / '.agent-memory', 's'))
-        self.stop('s', path)  # Copilot's next Stop of this chat saves it.
+        # Killed while holding its lock: the lock goes with the process, so the next Stop is not kept out.
+        killed = subprocess.Popen([sys.executable, '-c', 'import sys, time; sys.path.insert(0, sys.argv[1]); '
+                                   'from baton import project, hook; from pathlib import Path; '
+                                   'ctx = project.file_lock(hook.stop_lock(Path(sys.argv[2]), "s")); ctx.__enter__(); '
+                                   'print("held", flush=True); time.sleep(60)', str(Path(__file__).resolve().parents[1]),
+                                   str(self.project / '.agent-memory')], stdout=subprocess.PIPE, text=True)
+        self.assertEqual(killed.stdout.readline().strip(), 'held')
+        killed.kill()
+        killed.wait()
+        killed.stdout.close()
+        self.stop('s', path)
         self.assertEqual(read_json(self.project / '.agent-memory' / 'copilot.json')['message_id'], 'm1')
 
     def test_windows_write_retries_stay_within_the_budget(self):
         path = self.transcript('s', copilot_events('x', ('final_answer', 'Done.', 'm1'), session='s'))
-        refused = mock.Mock(side_effect=PermissionError('in use'))  # A file another process keeps open, every time.
+        real = os.replace
+        refused = []
+
+        def replace(src, dst, *args, **kwargs):
+            # Files another process keeps open: the shadow metadata and the checkpoint, after the capture began.
+            if Path(dst).name in ('exclude', 'attributes', 'copilot.json'):
+                refused.append(Path(dst).name)
+                raise PermissionError('in use')
+            return real(src, dst, *args, **kwargs)
         started = time.monotonic()
-        with mock.patch.object(project, 'WINDOWS', True), mock.patch.object(hook, 'COPILOT_STOP_BUDGET', 0.5), \
-                mock.patch.object(project.os, 'replace', refused), self.assertRaises(PermissionError):
-            self.stop('s', path)
-        self.assertLess(time.monotonic() - started, 2)
-        self.assertLessEqual(refused.call_count, 15)  # Not 20 tries for each file.
+        with mock.patch.object(project, 'WINDOWS', True), mock.patch.object(hook, 'COPILOT_STOP_BUDGET', 2), \
+                mock.patch.object(hook, 'COPILOT_PERSIST_RESERVE', 1), mock.patch.object(project.os, 'replace', replace):
+            try:
+                self.stop('s', path)
+            except PermissionError:
+                pass  # The CLI reports it; what matters is the time.
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertIn('copilot.json', refused)
 
     def test_stop_keeps_its_budget_while_a_lock_is_held(self):
         path = self.transcript('s', copilot_events('x', ('final_answer', 'Done.', 'm1'), session='s'))

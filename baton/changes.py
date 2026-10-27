@@ -88,10 +88,13 @@ def from_shadow(root, mem, message, deadline=None):
     exclude = shadow_exclude(root, deadline)
     if exclude is None:
         return None
-    (git_dir / 'info').mkdir(exist_ok=True)
-    write_text(git_dir / 'info' / 'exclude', exclude)
-    # Outranks the project's .gitattributes: no clean filter (an external program) runs while snapshotting.
-    write_text(git_dir / 'info' / 'attributes', '* -filter\n')
+    try:
+        (git_dir / 'info').mkdir(exist_ok=True)
+        write_text(git_dir / 'info' / 'exclude', exclude, deadline=deadline)
+        # Outranks the project's .gitattributes: no clean filter (an external program) runs while snapshotting.
+        write_text(git_dir / 'info' / 'attributes', '* -filter\n', deadline=deadline)
+    except OSError:
+        return None  # E.g. held open on Windows: the caller lists changed files instead.
     if run('add', '-A', timeout=6) is None:
         return None
     before = run('rev-parse', '-q', '--verify', 'HEAD')
