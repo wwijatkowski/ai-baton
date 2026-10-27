@@ -1,6 +1,7 @@
 // Test only, loaded by tests/live/run.js into its own VS Code profile. Takes commands from BATON_LIVE_IO/inbox
 // (one JSON file each) and answers in BATON_LIVE_IO/outbox. A command file is removed before it runs and its answer
 // is written before a reload, so a reload never repeats or loses a step. ready.json counts the window's starts.
+// Quit (`*-quit.json`) runs apart from the queue, so a chat that never ends cannot stop the cleanup.
 const fs = require('fs');
 const path = require('path');
 const vscode = require('vscode');
@@ -72,7 +73,7 @@ async function poll() {
   busy = true;
   try {
     const inbox = path.join(IO, 'inbox');
-    for (const name of fs.readdirSync(inbox).filter((n) => n.endsWith('.json')).sort()) {
+    for (const name of fs.readdirSync(inbox).filter((n) => n.endsWith('.json') && !n.endsWith('-quit.json')).sort()) {
       const file = path.join(inbox, name);
       let command;
       try {
@@ -82,9 +83,9 @@ async function poll() {
       }
       fs.rmSync(file, { force: true });
       const answer = path.join(IO, 'outbox', name);
-      if (command.op === 'reload' || command.op === 'quit') {
+      if (command.op === 'reload') {
         writeAtomic(answer, { ok: true, result: null });
-        await vscode.commands.executeCommand(command.op === 'reload' ? 'workbench.action.reloadWindow' : 'workbench.action.quit');
+        await vscode.commands.executeCommand('workbench.action.reloadWindow');
         return;
       }
       try {
@@ -96,6 +97,15 @@ async function poll() {
   } finally {
     busy = false;
   }
+}
+
+function quitRequested() {
+  const inbox = path.join(IO, 'inbox');
+  const name = fs.readdirSync(inbox).find((n) => n.endsWith('-quit.json'));
+  if (!name) return;
+  fs.rmSync(path.join(inbox, name), { force: true });
+  writeAtomic(path.join(IO, 'outbox', name), { ok: true, result: null });
+  vscode.commands.executeCommand('workbench.action.quit');
 }
 
 function activate(context) {
@@ -111,7 +121,14 @@ function activate(context) {
   }
   writeAtomic(readyFile, { generation: generation + 1, time: new Date().toISOString() });
   const timer = setInterval(() => poll().catch(() => {}), 500);
-  context.subscriptions.push({ dispose: () => clearInterval(timer) });
+  const control = setInterval(() => {
+    try {
+      quitRequested();
+    } catch {
+      // Tried again on the next tick.
+    }
+  }, 500);
+  context.subscriptions.push({ dispose: () => clearInterval(timer) }, { dispose: () => clearInterval(control) });
 }
 
 module.exports = { activate, deactivate() {} };

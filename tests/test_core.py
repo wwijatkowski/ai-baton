@@ -705,8 +705,16 @@ class CopilotHooksTest(unittest.TestCase):
             started = time.monotonic()
             self.stop('late', path)  # Nothing new: gives up after the wait, saves nothing twice.
         self.assertGreaterEqual(time.monotonic() - started, 0.3)
+        self.assertLess(time.monotonic() - started, 1.5)
         self.assertEqual(sum('"copilot"' in line for line in
                              (self.project / '.agent-memory' / 'history.jsonl').read_text().splitlines()), 2)
+
+    def test_stop_past_its_budget_still_saves_without_git(self):
+        path = self.transcript('slow', copilot_events('x', ('final_answer', 'Done late.', 'm1'), session='slow'))
+        with mock.patch.object(hook, 'COPILOT_STOP_BUDGET', 0), mock.patch.object(changes, 'git') as git:
+            self.stop('slow', path)
+        self.assertEqual(read_json(self.project / '.agent-memory' / 'copilot.json')['last_reply'], 'Done late.')
+        self.assertTrue(all(call.kwargs.get('deadline') is not None for call in git.call_args_list), git.call_args_list)
 
     def test_unsure_transcripts_save_nothing(self):
         done = ('final_answer', 'Done.', 'm1')
@@ -811,11 +819,11 @@ class CopilotHooksTest(unittest.TestCase):
         path = self.transcript('R', copilot_events('r', ('final_answer', 'Old R.', 'mR1'), session='R'))
         real_lock, held, go = hook.file_lock, threading.Event(), threading.Event()
 
-        def gated(lock):
+        def gated(lock, **options):
             if threading.current_thread().name == 'first':
                 held.set()
                 go.wait(10)
-            return real_lock(lock)
+            return real_lock(lock, **options)
 
         errors = []
 

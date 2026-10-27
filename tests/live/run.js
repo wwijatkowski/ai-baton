@@ -4,12 +4,13 @@
 //
 // Everything lives in ~/.cache/ai-baton/live/: a VS Code profile (user-data, extensions) that keeps the sign-in, and
 // a separate HOME for the whole VS Code process (so COPILOT_HOME, ~/.ai-baton and the hooks are the test's own; your
-// VS Code, ~/.copilot and chats are untouched). The AI Baton .vsix is built from this checkout and installed there.
+// VS Code, ~/.copilot and chats are untouched; on macOS the login keychain is shared, see linkKeychains). The AI Baton .vsix is built from this checkout and installed there.
 // A small driver extension (tests/live/driver) sends chat messages and reloads the window on request.
 //
 //   node tests/live/run.js setup            open the test window once and sign in to GitHub (Copilot), then close it
 //   node tests/live/run.js round [--keep] [--no-build]   run a round (4 messages); --keep leaves the test project
-//   node tests/live/run.js clean            delete the whole test profile, sign-in included
+//   node tests/live/run.js clean            delete the whole test profile, sign-in included (not keychain items)
+//   node tests/live/run.js probe [regex]    list matching VS Code commands (no Copilot messages)
 //
 // VS Code: BATON_LIVE_CODE (the `code` CLI), else the macOS app or `code` on PATH.
 const cp = require('child_process');
@@ -72,7 +73,9 @@ function writeSettings() {
 }
 
 // macOS finds the login keychain through HOME; without it VS Code cannot keep the sign-in ("Keychain Not Found").
-// The test HOME points at the real keychains, so the GitHub token stays encrypted there and nowhere else.
+// So the test HOME links your real ~/Library/Keychains: the test VS Code shares your login keychain (and VS Code's
+// encryption key in it); the GitHub token is kept, encrypted with that key, in the test profile. `clean` deletes the
+// profile, not keychain items. Credentials are not separated from your account; that would take another macOS user.
 function linkKeychains() {
   if (process.platform !== 'darwin') return;
   const link = path.join(HOME, 'Library', 'Keychains');
@@ -115,6 +118,47 @@ function launch(io, folder) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// One runner at a time, and none while the test VS Code runs: checked before anything is installed or deleted.
+function exclusive() {
+  fs.mkdirSync(LIVE, { recursive: true });
+  const lock = path.join(LIVE, 'runner.lock');
+  for (;;) {
+    try {
+      fs.writeFileSync(lock, String(process.pid), { flag: 'wx' });
+      break;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      const pid = Number(fs.readFileSync(lock, 'utf8'));
+      let alive = false;
+      try {
+        process.kill(pid, 0);
+        alive = true;
+      } catch {
+        // Left by a runner that died.
+      }
+      if (alive) throw new Error(`another live test runs (pid ${pid})`);
+      fs.rmSync(lock, { force: true });
+    }
+  }
+  process.on('exit', () => fs.rmSync(lock, { force: true }));
+  const pids = running();
+  if (pids) throw new Error(`the test VS Code is still running (pid ${pids.split('\n').join(', ')}): close it first`);
+}
+
+// Ends the test VS Code: quit through the driver, then SIGTERM, then SIGKILL, each bounded. True once nothing of it
+// is left running.
+async function stop(window, driver) {
+  if (driver) await driver.send({ op: 'quit' }, 10000).catch(() => {});
+  for (const signal of [null, 'SIGTERM', 'SIGKILL']) {
+    if (signal && window.exitCode === null && window.signalCode === null) window.kill(signal);
+    await Promise.race([window.exited, sleep(signal ? 5000 : 15000)]);
+    if (!running()) return true;
+    if (signal === 'SIGKILL') cp.spawnSync('pkill', ['-9', '-f', '--', `--user-data-dir[= ]${USER_DATA}`]);
+  }
+  await sleep(2000);
+  return !running();
+}
+
 async function waitFor(read, ms, what) {
   const deadline = Date.now() + ms;
   for (;;) {
@@ -150,8 +194,9 @@ class Driver {
 
   async send(command, ms = 60000) {
     if (command.op === 'chat' && ++this.messages > MAX_MESSAGES) throw new Error(`more than ${MAX_MESSAGES} Copilot messages`);
-    const name = `${String(++this.count).padStart(4, '0')}.json`;
+    const name = `${String(++this.count).padStart(4, '0')}-${command.op}.json`;
     const file = path.join(this.io, 'inbox', name);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(`${file}.tmp`, JSON.stringify(command));
     fs.renameSync(`${file}.tmp`, file);
     const answer = await waitFor(() => readJson(path.join(this.io, 'outbox', name)), ms, `no answer to ${command.op}`);
@@ -180,6 +225,7 @@ const randomName = () => {
 };
 
 async function round(options) {
+  exclusive();
   const { vsix, version, build } = buildVsix(options.noBuild);
   installVsix(vsix);
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -197,10 +243,11 @@ async function round(options) {
   const mem = path.join(project, '.agent-memory');
   const copilotSaved = () => readJson(path.join(mem, 'copilot.json')) || {};
   const copilotHistory = () => {
-    if (!fs.existsSync(path.join(mem, 'history.jsonl'))) return 0;
+    if (!fs.existsSync(path.join(mem, 'history.jsonl'))) return [];
     return fs.readFileSync(path.join(mem, 'history.jsonl'), 'utf8').split('\n')
-      .filter((line) => (readJsonLine(line) || {}).agent === 'copilot').length;
+      .map(readJsonLine).filter((entry) => entry && entry.agent === 'copilot');
   };
+  const replies = [];  // {label, id, messageId} of every reply, for the duplicate check at the end.
   let seeds = 0;
   const seed = (codename) => baton(['hook', 'codex'], JSON.stringify({
     cwd: project, hook_event_name: 'Stop', session_id: `seed-${++seeds}`, transcript_path: '',
@@ -209,7 +256,6 @@ async function round(options) {
   const sessionState = path.join(COPILOT_HOME, 'session-state');
   const driver = new Driver(io);
   const window = launch(io, project);
-  let saved = 0;
 
   // One message; returns what its turn shows in events.jsonl, checked against what the Stop hook saved.
   const ask = async (label, text) => {
@@ -228,11 +274,14 @@ async function round(options) {
       const current = copilotSaved();
       return current.message_id === t.final.messageId && current;
     }, 20000, `${label}: the Stop hook did not save this reply`).catch((error) => ({ error: error.message }));
-    check('ASSERT', `${label}: reply saved by the Stop hook`, !record.error && record.session_id === id &&
-      reply.startsWith(String(record.last_reply || '').replace(/…$/, '').trim()), record.error || `session ${id}`);
-    saved += 1;
-    check('ASSERT', `${label}: one history entry per reply`, copilotHistory() === saved, `${copilotHistory()} saved, ${saved} replies`);
-    return { query, reply, id, sessionStarts: ev.hookRuns(session.events, 'sessionStart'), returned };
+    // These replies are one short codename: the saved text must be exactly the reply.
+    check('ASSERT', `${label}: reply saved by the Stop hook`, !record.error && record.session_id === id && reply !== '' &&
+      String(record.last_reply || '').trim() === reply, record.error || `session ${id}, saved "${String(record.last_reply).slice(0, 80)}"`);
+    const entries = copilotHistory().filter((e) => e.message_id === t.final.messageId);
+    check('ASSERT', `${label}: one history entry for this reply`, entries.length === 1 && entries[0].session_id === id,
+      `${entries.length} entries`);
+    replies.push({ label, id, messageId: t.final.messageId });
+    return { query, reply, id, sessionStarts: t.sessionStarts, returned };
   };
   const knows = (reply, codename) => reply.toUpperCase().includes(codename);
 
@@ -267,7 +316,7 @@ async function round(options) {
     const t1 = await ask('t1', "What is this project's current codename, according to your AI Baton context? " +
       'Answer with the codename only. Do not read files or use any tools.');
     check('ASSERT', 't1: the hook context reached the model', knows(t1.reply, first), `expected ${first}, got "${t1.reply.slice(0, 200)}"`);
-    check('ASSERT', 't1: SessionStart ran and succeeded', t1.sessionStarts.length >= 1 && t1.sessionStarts.every((s) => s.success),
+    check('ASSERT', 't1: SessionStart ran in this turn and succeeded', t1.sessionStarts.length >= 1 && t1.sessionStarts.every((s) => s.success),
       JSON.stringify(t1.sessionStarts.map((s) => [s.source, s.success])));
     check('ASSERT', "t1: SessionStart's context carried the codename", t1.sessionStarts.some((s) => s.context.includes(first)));
 
@@ -278,8 +327,10 @@ async function round(options) {
       'Answer with the current codename only. Do not read files or use any tools.';
     const t2 = await ask('t2', followUp);
     check('ASSERT', 't2: same conversation', t2.id === t1.id, `${t1.id} / ${t2.id}`);
-    check('INFO', 't2: knows the newer codename', knows(t2.reply, second), `expected ${second}, got "${t2.reply.slice(0, 200)}"`);
-    check('INFO', 't2: SessionStart runs in this conversation', true, JSON.stringify(t2.sessionStarts.map((s) => [s.source, s.success, s.context.includes(second)])));
+    // Copilot runs SessionStart (source resume) on every turn: a later turn gets newer checkpoints.
+    check('ASSERT', "t2: this turn's SessionStart carried the newer codename",
+      t2.sessionStarts.some((s) => s.success && s.context.includes(second)), JSON.stringify(t2.sessionStarts.map((s) => [s.source, s.success])));
+    check('ASSERT', 't2: knows the newer codename', knows(t2.reply, second), `expected ${second}, got "${t2.reply.slice(0, 200)}"`);
 
     // 3. Reload the window, then the open chat again.
     const third = randomName();
@@ -295,10 +346,14 @@ async function round(options) {
     await driver.send({ op: 'reload' });
     await driver.ready(before);
     await sleep(5000);  // Let the chat view restore its conversation.
-    const t3 = await ask('t3', followUp);
-    check('INFO', 't3: after the reload, the same conversation', t3.id === t1.id, `${t1.id} / ${t3.id}`);
+    // Not t2's question again: asked the same, the model tends to repeat its last answer from the conversation.
+    const t3 = await ask('t3', 'The codename may have changed again. Going by your newest AI Baton context only, what is ' +
+      'the codename now? Answer with the codename only. Do not read files or use any tools.');
+    check('ASSERT', 't3: after the reload, the same conversation', t3.id === t1.id, `${t1.id} / ${t3.id}`);
+    check('ASSERT', "t3: this turn's SessionStart carried the codename set before the reload",
+      t3.sessionStarts.some((s) => s.success && s.context.includes(third)), JSON.stringify(t3.sessionStarts.map((s) => [s.source, s.success])));
+    // The model's answer, not the hooks: the delivery above is the assertion (seen once: context right, answer stale).
     check('INFO', 't3: knows the codename set before the reload', knows(t3.reply, third), `expected ${third}, got "${t3.reply.slice(0, 200)}"`);
-    check('INFO', 't3: SessionStart runs', true, JSON.stringify(t3.sessionStarts.map((s) => [s.source, s.success, s.context.includes(third)])));
 
     // 4. A new chat must get the newest context.
     const fourth = randomName();
@@ -308,6 +363,12 @@ async function round(options) {
       'Answer with the codename only. Do not read files or use any tools.');
     check('ASSERT', 't4: a new conversation', t4.id !== t1.id && t4.id !== t3.id, t4.id);
     check('ASSERT', 't4: the new chat got the newest context', knows(t4.reply, fourth), `expected ${fourth}, got "${t4.reply.slice(0, 200)}"`);
+    // A Stop that came late could add a duplicate after a turn was checked.
+    await sleep(3000);
+    const all = copilotHistory();
+    check('ASSERT', 'history: exactly one entry per reply, no others', all.length === replies.length &&
+      replies.every((r) => all.filter((e) => e.message_id === r.messageId && e.session_id === r.id).length === 1),
+      `${all.length} entries, ${replies.length} replies`);
   } catch (error) {
     check('ASSERT', 'round finished', false, error.message);
   } finally {
@@ -316,13 +377,13 @@ async function round(options) {
     } catch {
       // The CLI may never have been installed.
     }
-    await driver.send({ op: 'quit' }, 10000).catch(() => {});
-    await Promise.race([window.exited, sleep(15000)]);
-    if (window.exitCode === null) window.kill();
+    const stopped = await stop(window, driver);
+    check('ASSERT', 'the test VS Code ended', stopped);
     const failed = results.filter((r) => r.kind === 'ASSERT' && !r.ok);
     const report = path.join(dir, 'report.json');
     fs.writeFileSync(report, JSON.stringify({ version, build, messages: driver.messages, results }, null, 2));
-    if (!options.keep) fs.rmSync(project, { recursive: true, force: true, maxRetries: 5 });
+    if (!options.keep && stopped) fs.rmSync(project, { recursive: true, force: true, maxRetries: 5 });
+    else if (!stopped) console.log(`The test VS Code is still running; the project stays: ${project}`);
     console.log(`\n${failed.length ? `${failed.length} FAILED` : 'All assertions passed'}; ${driver.messages} Copilot messages; report: ${report}`);
     process.exitCode = failed.length ? 1 : 0;
   }
@@ -338,6 +399,7 @@ function readJsonLine(line) {
 
 // Lists the window's commands that match a pattern (no Copilot messages): for finding chat commands after an update.
 async function probe(match) {
+  exclusive();
   const io = path.join(LIVE, 'probe');
   fs.rmSync(io, { recursive: true, force: true });
   const driver = new Driver(io);
@@ -347,16 +409,17 @@ async function probe(match) {
     console.log(JSON.stringify(await driver.send({ op: 'info' }), null, 2));
     console.log((await driver.send({ op: 'commands', match })).join('\n'));
   } finally {
-    await driver.send({ op: 'quit' }, 10000).catch(() => {});
-    await Promise.race([window.exited, sleep(15000)]);
+    await stop(window, driver);
   }
 }
 
 async function setup() {
   console.log('Opening the test VS Code. Sign in to GitHub for Copilot (Accounts menu, or the Chat view), check that a chat\n' +
     'answers, then close the window. The sign-in stays in ~/.cache/ai-baton/live for the next rounds.');
+  exclusive();
   const window = launch(null, null);
   await window.exited;
+  if (running()) console.log('VS Code is still running in the background; close it (Quit) before a round.');
 }
 
 async function main() {
@@ -364,7 +427,12 @@ async function main() {
   if (command === 'setup') return setup();
   if (command === 'round') return round({ keep: rest.includes('--keep'), noBuild: rest.includes('--no-build') });
   if (command === 'probe') return probe(rest[0] || 'chat|copilot');
-  if (command === 'clean') return fs.rmSync(LIVE, { recursive: true, force: true });
+  if (command === 'clean') {
+    exclusive();
+    // The lock itself is inside: removed last, by the exit handler.
+    for (const name of fs.readdirSync(LIVE)) if (name !== 'runner.lock') fs.rmSync(path.join(LIVE, name), { recursive: true, force: true });
+    return;
+  }
   console.log('Usage: node tests/live/run.js setup | round [--keep] [--no-build] | clean');
   process.exitCode = 2;
 }

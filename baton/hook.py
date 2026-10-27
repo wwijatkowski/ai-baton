@@ -41,8 +41,10 @@ COPILOT_TAIL = 512 * 1024  # Bytes of a Copilot transcript read at Stop: the cur
 COPILOT_RECEIPTS = '.copilot-stops.json'
 MAX_RECEIPTS = 500
 # Copilot runs Stop before its last events reach the file (seen live: the final answer lands milliseconds later), so
-# Stop waits this long for a reply it has not saved yet. Bounded, and well inside the hook's 10 s.
+# Stop waits this long for a reply it has not saved yet.
 COPILOT_REPLY_WAIT = 2.0
+# The whole Copilot Stop (wait, lock, change capture) ends by then, inside the hook's 10 s: git is skipped after it.
+COPILOT_STOP_BUDGET = 7.0
 HANDOFF_DOC = 'docs/AGENT_HANDOFF.md'
 HANDOFF_RE = re.compile(r'(?im)^[ \t#*_>]*handoff[ \t*_]*:?[ \t*_]*$')
 
@@ -184,7 +186,7 @@ def append_history(mem, snapshot):
         write_text(history, '\n'.join(lines) + '\n', private=True)
 
 
-def save_checkpoint(mem, root, agent, payload, turn_start=None, summary=None, client=None, extra=None):
+def save_checkpoint(mem, root, agent, payload, turn_start=None, summary=None, client=None, extra=None, deadline=None):
     """Save the agent's checkpoint; returns it, or None when there was nothing to save. Hooks pass the payload only;
     `baton mcp` passes the conversation's start, the summary the agent wrote and the MCP client's name."""
     message = payload.get('last_assistant_message')
@@ -198,7 +200,7 @@ def save_checkpoint(mem, root, agent, payload, turn_start=None, summary=None, cl
         turn = sessions.get(str(payload.get('session_id') or '')) or {}
         turn_start = turn.get('at') if turn.get('state') == 'working' else own
     previous = max((s.get('saved_at', '') for s in other_snapshots(mem, None, root)), default=None)
-    found = changes.capture(root, mem, previous, f'{agent} {saved_at}')
+    found = changes.capture(root, mem, previous, f'{agent} {saved_at}', deadline)
     found['changed'] = redact('\n'.join(found['changed'])).splitlines()
     reply = redact(message)
     snapshot = {
@@ -404,17 +406,18 @@ def run_copilot(mem, root, event, session_id, payload):
         changes.baseline(root, mem)
         set_activity(mem, 'copilot', 'working', session_id, hook=True)
     elif event == 'Stop':
+        deadline = time.monotonic() + COPILOT_STOP_BUDGET
         wait_for_copilot_reply(mem, payload.get('transcript_path'), session_id)
         # Locked, the transcript read inside: a Stop that is late or seen twice finds the newest reply already saved.
         # Receipts per conversation live apart from activity.json, which forgets older conversations.
-        with file_lock(mem / '.copilot-stop.lock'):
+        with file_lock(mem / '.copilot-stop.lock', timeout=min(3, max(0.1, deadline - time.monotonic()))):
             found = copilot_reply(payload.get('transcript_path'), session_id)
             receipts = read_json(mem / COPILOT_RECEIPTS, {}) or {}
             if not isinstance(receipts, dict):
                 receipts = {}
             if found and receipts.get(str(session_id or '')) != found['message_id']:
                 save_checkpoint(mem, root, 'copilot', {'session_id': session_id, 'last_assistant_message': found['reply']},
-                                client=found['client'], extra={'message_id': found['message_id']})
+                                client=found['client'], extra={'message_id': found['message_id']}, deadline=deadline)
                 receipts.pop(str(session_id or ''), None)
                 receipts[str(session_id or '')] = found['message_id']
                 write_json(mem / COPILOT_RECEIPTS, dict(list(receipts.items())[-MAX_RECEIPTS:]), private=True)
