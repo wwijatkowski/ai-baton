@@ -127,6 +127,15 @@
       fix && h('button', { onclick: () => send(fix[0], { agent: agent.id }) }, fix[1]));
   }
 
+  // Agents without hooks: AI Baton's MCP server gives them the shared memory (the agent calls its tools).
+  function mcpNote(agent) {
+    if (agent.mcp === 'installed') return h('div', { class: 'small muted' }, 'Memory through AI Baton\'s MCP tools');
+    if (agent.mcp !== 'available') return null;
+    return h('div', { class: 'warning small' }, h('span', null, 'No memory hooks, so this agent does not share memory yet.'),
+      h('button', { onclick: () => send('installMcp', { agent: agent.id }),
+        title: 'Add AI Baton\'s MCP server to this agent\'s settings' }, 'Connect memory'));
+  }
+
   function agents(st, models, hooks) {
     if (!st || !st.agents) return null;
     return h('div', null,
@@ -144,6 +153,7 @@
             cp ? `Checkpoint ${ago(cp.saved_at)}${cp.branch ? ' · ' + cp.branch : ''}${cp.commit ? ' @ ' + cp.commit.slice(0, 7) : ''}` : 'No checkpoint'),
           cp && cp.summary && h('p', { class: 'summary', title: plain(cp.summary) }, plain(cp.summary)),
           st.initialized && hookWarning(a, hooks && hooks[a.id]),
+          st.initialized && mcpNote(a),
           modelPicker(a.id, models),
           h('div', { class: 'row' },
             h('button', { class: 'primary', onclick: () => send('open', { agent: a.id }) }, 'Open'),

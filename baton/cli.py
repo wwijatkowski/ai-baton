@@ -3,7 +3,7 @@ import argparse
 import json
 import sys
 
-from . import hook, hookcheck, init_project, mcp, models, project, recall, review, status, usage
+from . import hook, hookcheck, init_project, mcp, mcp_install, models, project, recall, review, status, usage
 
 
 def fmt(n):
@@ -94,6 +94,12 @@ def main(argv=None):
     p = sub.add_parser('mcp', help='MCP server (stdio) with AI Baton memory for agents without hooks')
     p.add_argument('--agent', required=True, help='the agent this server serves, e.g. copilot or gemini')
     p.add_argument('--project', help='serve only this project (default: the project path each tool call names)')
+    p = sub.add_parser('install-mcp', help="add AI Baton's MCP server to an agent without hooks (e.g. copilot)")
+    p.add_argument('--agent', required=True)
+    p.add_argument('--path', default='.', help='project whose added agents count (default: here)')
+    p = sub.add_parser('uninstall-mcp', help="remove AI Baton's MCP server from agents' MCP settings")
+    p.add_argument('--agents', help='comma-separated agent ids (default: all)')
+    p.add_argument('--path', default='.')
     p = sub.add_parser('usage', help='token usage and limits')
     p.add_argument('--days', type=int, default=30)
     p.add_argument('--project')
@@ -206,6 +212,17 @@ def main(argv=None):
             sys.exit(f'Error: {error}')
         except KeyboardInterrupt:
             pass
+    elif args.command in ('install-mcp', 'uninstall-mcp'):
+        root = project.find_root(args.path)
+        try:
+            if args.command == 'install-mcp':
+                log = mcp_install.install(args.agent, root)
+            else:
+                only = [a.strip() for a in args.agents.split(',') if a.strip()] if args.agents else None
+                log = mcp_install.uninstall(only, root)
+        except (mcp_install.McpInstallError, OSError) as error:
+            sys.exit(f'Error: {error}')
+        print('\n'.join(log) or 'No AI Baton MCP server found.')
     elif args.command == 'usage':
         report = usage.summarize(args.days, args.project)
         print(json.dumps(report, ensure_ascii=False) if args.json else '', end='')

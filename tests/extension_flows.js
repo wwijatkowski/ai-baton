@@ -320,6 +320,26 @@ test('switching while another agent works asks first', async (h) => {
   assert.ok(!h.executed.some((c) => c[0] === 'claude-vscode.sidebar.open'), 'dismissed: stays put');
 });
 
+test('Connect memory adds the MCP server; then opening the agent copies no context request', async (h) => {
+  const copilot = { id: 'copilot', label: 'Copilot', extension: 'github.copilot-chat', openCommand: 'workbench.action.chat.open',
+    source: 'user', checkpoint: null, activity: null };
+  let connected = false;
+  h.installed.add('github.copilot-chat');
+  h.cli.status = () => sampleStatus({ agents: [...sampleStatus().agents, { ...copilot, mcp: connected ? 'installed' : 'available' }] });
+  h.cli['install-mcp'] = () => { connected = true; return {}; };
+  await h.start();
+  await h.panel({ cmd: 'open', agent: 'copilot' });
+  assert.match(h.clipboard, /AGENTS\.md/, 'not connected yet: the context request is copied');
+  h.clipboard = '';
+  await h.panel({ cmd: 'installMcp', agent: 'copilot' });
+  await h.settle();
+  assert.deepStrictEqual(h.cliArgs('install-mcp')[0], ['install-mcp', '--agent', 'copilot', '--path', ROOT]);
+  assert.ok(h.dialogs.some((d) => d.kind === 'info' && /Copilot can now use AI Baton's memory/.test(d.text)));
+  await h.panel({ cmd: 'open', agent: 'copilot' });
+  assert.strictEqual(h.clipboard, '', 'connected: nothing to paste');
+  assert.ok(h.executed.some((c) => c[0] === 'workbench.action.chat.open'));
+});
+
 // ---------- initialize ----------
 
 test('Initialize installs missing user hooks once, then sets the project up', async (h) => {

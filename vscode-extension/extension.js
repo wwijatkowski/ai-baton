@@ -219,6 +219,21 @@ async function installHooks(ids) {
 }
 
 // Codex only runs hooks the user trusted; its chat box has a hooks button (Review hooks), its CLI has /hooks.
+// AI Baton's MCP server in the agent's own MCP settings (`baton install-mcp`), for agents without hooks.
+async function installMcp(id) {
+  const st = state.status;
+  const agent = st && st.agents.find((a) => a.id === id);
+  if (!agent) return;
+  try {
+    await baton(['install-mcp', '--agent', id, '--path', st.root]);
+    vscode.window.showInformationMessage(`${agent.label} can now use AI Baton's memory through its MCP tools. Use agent ` +
+      'mode; the first time, VS Code may ask you to trust or start the ai-baton server.');
+  } catch (error) {
+    vscode.window.showErrorMessage(`Could not connect ${agent.label}: ${error.message.replace(/^Error: /, '')}`);
+  }
+  refreshStatus();
+}
+
 async function approveHooks(id) {
   const agent = ((state.status && state.status.agents) || []).find((a) => a.id === id);
   if (!agent) return;
@@ -365,8 +380,8 @@ async function openAgent(id, fresh) {
     output.appendLine(`${agent.label}: ${error.stack || error.message}`);
     return vscode.window.showErrorMessage(`Could not open ${agent.label}: ${error.message}`);
   }
-  if (!agent.hooks) {
-    // Agents without lifecycle hooks get the shared context by hand.
+  if (!agent.hooks && agent.mcp !== 'installed') {
+    // Agents without lifecycle hooks or AI Baton's MCP server get the shared context by hand.
     await vscode.env.clipboard.writeText(CONTEXT_PROMPT);
     vscode.window.showInformationMessage(`${agent.label} has no hooks. A request to load the shared context is on your clipboard; paste it into the chat.`);
   }
@@ -413,7 +428,8 @@ function agentCandidates() {
     const pkg = ext.packageJSON || {};
     const known = KNOWN_AGENTS[key];
     const categories = (pkg.categories || []).map((c) => String(c).toLowerCase());
-    if (registered.has(key) || key.endsWith('.ai-baton') || pkg.isBuiltin) continue;  // Never offer ourselves.
+    // Never offer ourselves; built-in extensions only when they are a known agent (VS Code now ships Copilot Chat).
+    if (registered.has(key) || key.endsWith('.ai-baton') || (pkg.isBuiltin && !known)) continue;
     if (!known && !categories.some((c) => AGENT_CATEGORIES.includes(c))) continue;
     const containers = Object.values((pkg.contributes && pkg.contributes.viewsContainers) || {}).flat();
     const openCommand = (known && known.openCommand) || (containers[0] && `workbench.view.extension.${containers[0].id}`);
@@ -446,7 +462,7 @@ async function addAgent() {
     await baton(['add-agent', JSON.stringify(pick.candidate.agent)]);
     vscode.window.showInformationMessage(pick.candidate.builtin
       ? `${pick.candidate.agent.label} is back. In projects set up without it, run AI Baton: Initialize Project again to add its hooks.`
-      : `${pick.candidate.agent.label} added. It has no memory hooks: when you open it, AI Baton copies a context request for you to paste.`);
+      : `${pick.candidate.agent.label} added. It has no memory hooks: use Connect memory on its card if it shows one; otherwise, when you open it, AI Baton copies a context request for you to paste.`);
   } catch (error) {
     vscode.window.showErrorMessage(error.message);
   }
@@ -881,6 +897,7 @@ class PanelProvider {
       else if (msg.cmd === 'review') askForReview(msg.entry);
       else if (msg.cmd === 'installHooks') installHooks([msg.agent]);
       else if (msg.cmd === 'approveHooks') approveHooks(msg.agent);
+      else if (msg.cmd === 'installMcp') installMcp(msg.agent);
       else if (msg.cmd === 'session') openSession(msg.agent, msg.session);
       else if (msg.cmd === 'liveUsage') showLiveUsage(msg.agent);
       else if (msg.cmd === 'copy') copySummary(msg.text);

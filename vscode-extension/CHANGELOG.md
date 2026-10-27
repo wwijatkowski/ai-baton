@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Agents without hooks (Copilot, Cline, Continue, Gemini and other MCP clients) can share AI Baton's memory through its local MCP server, `baton mcp --agent <id>`: tools `baton_context`, `baton_checkpoint` and `baton_recall`. Their checkpoints show up in Recent work and reach Claude and Codex.
+- Connect memory: one click on an agent's card adds the MCP server to its settings (GitHub Copilot in VS Code for now; `baton install-mcp --agent copilot`). Add agent offers Copilot Chat again now that VS Code ships it built in.
 - The context a new chat gets stays within its size budget however many agents saved checkpoints: the newest come first, older ones arrive with the next prompt.
 
 ## 0.4.2 (preview)

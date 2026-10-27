@@ -68,7 +68,8 @@ const state = {
     agents: [
       { id: 'claude', label: 'Claude', hooks: 'claude', newCommand: 'x', usageView: 'v', sessionUri: 'u', review: 'claude', installed: true, activity: { state: 'working', at: iso(1) },
         checkpoint: { saved_at: iso(2), branch: 'main', commit: 'abc1234', summary: 'Built the thing.' } },
-      { id: 'cline', label: 'Cline', source: 'user', activity: null, checkpoint: null },
+      { id: 'cline', label: 'Cline', source: 'user', activity: null, checkpoint: null, mcp: 'installed' },
+      { id: 'copilot', label: 'Copilot', source: 'user', activity: null, checkpoint: null, mcp: 'available' },
     ],
     hidden_agents: [{ id: 'codex', label: 'Codex' }],
     docs: Object.fromEntries(['handoff', 'status', 'decisions', 'agents'].map((k) => [k, { path: `/p/${k}.md`, updated: k === 'agents' ? null : iso(5) }])),
@@ -115,6 +116,8 @@ if (panel.app.all().filter((e) => e.tag === 'button' && e.textContent === 'Ask f
   failures.push('panel: no "Ask for review" on the expanded Recent work entry');
 }
 if (!button(panel.app, 'Approve in Claude')) failures.push('panel: no hook approval button');
+if (!button(panel.app, 'Connect memory')) failures.push('panel: no "Connect memory" for an agent without hooks');
+if (!panel.app.textContent.includes("Memory through AI Baton's MCP tools")) failures.push('panel: connected MCP agent not marked');
 panel.send({ type: 'state', state: { ...state, hooks: { claude: { state: 'missing' } } }, root: '/p' });
 check('panel, hooks missing', panel.app);
 if (!button(panel.app, 'Install hooks')) failures.push('panel: no "Install hooks" button');

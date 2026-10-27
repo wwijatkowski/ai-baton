@@ -4,6 +4,7 @@ from pathlib import Path
 
 import json
 
+from . import mcp_install
 from .project import MARKER, agent_activity, clip, find_root, is_working, load_agents, read_json
 from .recall import entries
 
@@ -51,11 +52,22 @@ def project_recent(start):
     return {'root': str(root), 'sessions': recent_work(root / '.agent-memory', chars=None)}
 
 
+def mcp_state(agent, root=None):
+    """For agents without hooks: whether AI Baton's MCP server is in their settings ('installed'), can be added
+    ('available'), or neither (None)."""
+    if agent.get('hooks'):
+        return None
+    try:
+        return mcp_install.state(agent['id'], root)
+    except OSError:
+        return None
+
+
 def project_status(start):
     root = find_root(start)
     if root is None:
         return {'initialized': False, 'path': str(Path(start).resolve()),
-                'agents': [{**a, 'activity': None, 'checkpoint': None} for a in load_agents()],
+                'agents': [{**a, 'activity': None, 'checkpoint': None, 'mcp': mcp_state(a)} for a in load_agents()],
                 'hidden_agents': load_agents(hidden=True)}
     mem = root / '.agent-memory'
     recent = recent_work(mem)
@@ -63,7 +75,7 @@ def project_status(start):
     agents = []
     for agent in load_agents(root):
         snap = read_json(mem / (agent['id'] + '.json')) or {}
-        agents.append({**agent,
+        agents.append({**agent, 'mcp': mcp_state(agent, root),
                        # "working" only while is_working agrees (turn not ended in the transcript, not stale).
                        'activity': {**act, 'state': 'working' if is_working(act) else 'idle'}
                        if (act := agent_activity(activity.get(agent['id']))) else None,

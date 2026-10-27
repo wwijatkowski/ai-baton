@@ -52,7 +52,7 @@ Then start a new chat in either agent.
 
 Claude Code and Codex share memory through hooks. Other agents that speak MCP (the Model Context Protocol) can use AI Baton's local MCP server: `baton mcp --agent <id>`, started by the agent, over stdio, with no network. It gives the agent three tools: `baton_context` (what the hooks give Claude and Codex at the start of a chat), `baton_checkpoint` (save a summary of the work) and `baton_recall` (search older checkpoints). Its checkpoints show up in Recent work and reach the other agents.
 
-Add it to the agent's MCP settings with absolute paths, for example (macOS and Linux; the extension installs the CLI in `~/.ai-baton`):
+For GitHub Copilot, click **Connect memory** on its card (or run `baton install-mcp --agent copilot`): AI Baton adds the server to VS Code's user `mcp.json`. For other agents, add it to the agent's MCP settings with absolute paths, for example (macOS and Linux; the extension installs the CLI in `~/.ai-baton`):
 
 ```json
 { "command": "python3", "args": ["/Users/you/.ai-baton/bin/baton", "mcp", "--agent", "copilot"] }
