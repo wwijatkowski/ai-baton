@@ -369,52 +369,76 @@ MAX_REVIEW_HOURS = 2  # An entry older than this is a review that died without c
 
 
 def process_alive(pid):
+    """Whether process `pid` still runs; never signals it (os.kill(pid, 0) would end it on Windows)."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or not 0 < pid < 2 ** 31:
+        return False
     if os.name == 'nt':
-        return True  # os.kill(pid, 0) would end the process on Windows; the age limit covers dead ones there.
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return ctypes.GetLastError() == 5  # Access denied: it exists, owned by someone else.
+        try:
+            code = ctypes.c_ulong()
+            return bool(kernel.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259  # STILL_ACTIVE
+        finally:
+            kernel.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
-    except (PermissionError, OSError):
-        return True
+    except OSError:
+        return True  # EPERM: it exists, owned by someone else.
     return True
+
+
+def review_entry(entry):
+    """(started, entry) for a review that is still running, else None. Damaged entries count as not running."""
+    if not isinstance(entry, dict) or not isinstance(entry.get('agent'), str):
+        return None
+    started = aware(entry.get('started'))
+    if started is None or datetime.now(timezone.utc) - started > timedelta(hours=MAX_REVIEW_HOURS):
+        return None
+    return (started, entry) if process_alive(entry.get('pid')) else None
+
+
+def update_reviews(root, change):
+    """Apply `change` to the running reviews under the lock, dropping finished or damaged ones. Best effort: the
+    badge is optional, so a failure here (permissions, a busy lock, a symlink planted as reviews.json) never stops
+    or spoils a review."""
+    try:
+        mem = memory_dir(root)
+        path = mem / REVIEWS
+        if path.is_symlink():
+            return
+        with file_lock(mem / '.reviews.lock'):
+            running = read_json(path, {}) or {}
+            running = {k: v for k, v in running.items() if review_entry(v)} if isinstance(running, dict) else {}
+            change(running)
+            write_json(path, running, private=True)
+    except (OSError, TimeoutError, ValueError):
+        pass
 
 
 def start_review(root, agent, model='', effort=''):
     """Mark a review as running; returns the token for end_review."""
-    mem = memory_dir(root)
     token = f'{os.getpid()}-{time.time_ns()}'
-    with file_lock(mem / '.reviews.lock'):
-        running = read_json(mem / REVIEWS, {}) or {}
-        running = running if isinstance(running, dict) else {}
-        running[token] = {'agent': agent, 'model': model or '', 'effort': effort or '', 'started': now_iso(),
-                          'pid': os.getpid()}
-        write_json(mem / REVIEWS, running, private=True)
+    entry = {'agent': agent, 'model': model or '', 'effort': effort or '', 'started': now_iso(), 'pid': os.getpid()}
+    update_reviews(root, lambda running: running.__setitem__(token, entry))
     return token
 
 
 def end_review(root, token):
-    mem = memory_dir(root)
-    with file_lock(mem / '.reviews.lock'):
-        running = read_json(mem / REVIEWS, {}) or {}
-        if isinstance(running, dict) and running.pop(token, None) is not None:
-            write_json(mem / REVIEWS, running, private=True)
+    update_reviews(root, lambda running: running.pop(token, None))
 
 
 def running_reviews(mem):
-    """{agent: the newest running review} for reviews whose process is alive and not older than MAX_REVIEW_HOURS."""
-    running = read_json(Path(mem) / REVIEWS, {}) or {}
+    """{agent: the newest running review}: read only, for the panel."""
+    path = Path(mem) / REVIEWS
+    running = {} if path.is_symlink() else read_json(path, {}) or {}
     found = {}
-    for entry in (running.values() if isinstance(running, dict) else []):
-        if not isinstance(entry, dict) or not isinstance(entry.get('agent'), str):
-            continue
-        try:
-            started = datetime.fromisoformat(entry['started'])
-            pid = int(entry['pid'])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if datetime.now(timezone.utc) - started > timedelta(hours=MAX_REVIEW_HOURS) or not process_alive(pid):
-            continue
-        if entry['agent'] not in found or entry['started'] > found[entry['agent']]['started']:
-            found[entry['agent']] = {k: entry.get(k) for k in ('model', 'effort', 'started')}
-    return found
+    for value in (running.values() if isinstance(running, dict) else []):
+        live = review_entry(value)
+        if live and (value['agent'] not in found or live[0] > found[value['agent']][0]):
+            found[value['agent']] = live
+    return {agent: {k: entry.get(k) for k in ('model', 'effort', 'started')} for agent, (_, entry) in found.items()}

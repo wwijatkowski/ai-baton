@@ -31,3 +31,4 @@ One place to switch between coding agents on a project without losing context or
 6. Measure whether project memory saves tokens (tokens spent before real work starts, before vs after init).
 7. Set up the user's own projects with AI Baton (the list and order are kept privately; ask the user first).
 8. Optionally remove the old project hooks from projects set up before the global hooks (global hooks cover them; ask the user first).
+9. Hardening (Codex review of the reviewing badge, 2026-10-27): `project.write_text` follows symlinks (wanted for user settings files), so a symlink planted in `.agent-memory/` (activity.json, checkpoints) would redirect AI Baton's writes; reviews.json already refuses symlinks. Decide whether memory files should refuse symlinks too.

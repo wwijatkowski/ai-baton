@@ -1,5 +1,6 @@
 import io
 import shutil
+import signal
 import os
 from datetime import datetime, timezone
 import json
@@ -1044,13 +1045,46 @@ class ReviewTest(unittest.TestCase):
                          {'claude': None, 'codex': None})
         after = {f.name: f.read_bytes() for f in mem.iterdir() if f.is_file() and f.name not in ('reviews.json', '.reviews.lock')}
         self.assertEqual(after, before)  # No checkpoint, activity or history from a review.
-        # A review that died (its process gone, or far too old) does not show.
+        # A review that died (its process gone, or far too old) or a damaged entry does not show, and never breaks
+        # the status; the next review's bookkeeping drops them, keeping the live ones.
+        ended = subprocess.Popen([sys.executable, '-c', 'pass'])
+        ended.wait()
+        self.assertTrue(project.process_alive(os.getpid()))
+        self.assertFalse(project.process_alive(ended.pid))
+        now = project.now_iso()
         project.write_json(mem / 'reviews.json', {
-            'a': {'agent': 'codex', 'model': '', 'effort': '', 'started': project.now_iso(), 'pid': 999999},
-            'b': {'agent': 'claude', 'model': '', 'effort': '', 'started': '2020-01-01T00:00:00+00:00', 'pid': os.getpid()},
-            'c': 'damaged'})
-        self.assertEqual(project.running_reviews(mem), {} if not WINDOWS else {'codex': {'model': '', 'effort': '',
-                         'started': read_json(mem / 'reviews.json')['a']['started']}})
+            'gone': {'agent': 'codex', 'started': now, 'pid': ended.pid},
+            'old': {'agent': 'claude', 'started': '2020-01-01T00:00:00+00:00', 'pid': os.getpid()},
+            'naive': {'agent': 'claude', 'started': now[:-6], 'pid': os.getpid()},  # No zone: read as UTC.
+            'huge': {'agent': 'claude', 'started': now, 'pid': 10 ** 30},
+            'flag': {'agent': 'claude', 'started': now, 'pid': True},
+            'text': 'damaged',
+            'live': {'agent': 'codex', 'model': 'm', 'effort': '', 'started': now, 'pid': os.getpid()}})
+        expected = {'codex': {'model': 'm', 'effort': '', 'started': now},
+                    'claude': {'model': None, 'effort': None, 'started': now[:-6]}}
+        self.assertEqual(project.running_reviews(mem), expected)
+        self.assertEqual({a['id']: a['reviewing'] for a in status.project_status(self.project)['agents']}, expected)
+        project.end_review(self.project, 'not-there')
+        self.assertEqual(set(read_json(mem / 'reviews.json')), {'live', 'naive'})
+
+    def test_review_bookkeeping_never_stops_a_review(self):
+        (self.project / 'NEW.md').write_text('x\n')
+        mem = self.project / '.agent-memory'
+
+        def busy(*_):
+            raise TimeoutError('locked')
+
+        with mock.patch.object(project, 'file_lock', busy):
+            self.assertIn('claude args', review.review(self.project, 'claude', 'goal')['review'])
+        if not WINDOWS:  # A symlink planted as reviews.json: its target is never written.
+            target = Path(self.tmp.name) / 'target.txt'
+            target.write_text('keep me')
+            (mem / 'reviews.json').unlink(missing_ok=True)
+            (mem / 'reviews.json').symlink_to(target)
+            review.review(self.project, 'claude', 'goal')
+            self.assertEqual(target.read_text(), 'keep me')
+            self.assertEqual(project.running_reviews(mem), {})
+        self.assertIs(signal.getsignal(signal.SIGINT), signal.default_int_handler)  # Restored.
 
     def test_reviews_uncommitted_changes_including_new_files(self):
         (self.project / 'NEW.md').write_text('brand new line\n')
