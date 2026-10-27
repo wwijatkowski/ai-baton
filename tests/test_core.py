@@ -1294,6 +1294,23 @@ class ReviewTest(unittest.TestCase):
         subprocess.run(g + ['merge', '-q', '--no-ff', '-m', 'merge side', 'side'], cwd=self.project, check=True)
         diff, what, notes = review.collect_diff(self.project, commit='HEAD')
         self.assertIn('from the side branch', diff)
+        # --base: a branch's commits since it left the base, as a pull request shows them; not the base's own.
+        subprocess.run(g + ['checkout', '-q', '-b', 'feature'], cwd=self.project, check=True)
+        (self.project / 'feature.txt').write_text('feature work\n')
+        subprocess.run(['git', 'add', 'feature.txt'], cwd=self.project, check=True)
+        subprocess.run(g + ['commit', '-q', '-m', 'feature'], cwd=self.project, check=True)
+        (self.project / 'feature.txt').write_text('not committed\n')
+        diff, what, notes = review.collect_diff(self.project, base='side')
+        self.assertIn('feature work', diff)
+        self.assertNotIn('from the side branch', diff)  # Merged before the branch left it.
+        self.assertIn('the commits since side', what)
+        self.assertIn('Uncommitted changes are not part of this review', notes)
+        for bad in ('no-such-branch', '--output=x'):
+            with self.assertRaises(review.ReviewError):
+                review.collect_diff(self.project, base=bad)
+        with self.assertRaises(review.ReviewError):
+            review.review(self.project, 'codex', commit='HEAD', base='side')
+        subprocess.run(['git', 'checkout', '-q', 'feature.txt'], cwd=self.project, check=True)
         # Many new files: one git call each is capped, the rest is named.
         crowd = Path(self.tmp.name) / 'crowd'
         crowd.mkdir()

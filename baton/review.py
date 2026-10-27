@@ -6,6 +6,7 @@ It runs read-only. Not a hook: this calls a model, takes a minute or two, and on
 
 What is reviewed, by what the project has (see changes.py for how checkpoints record changes):
 git      -> the uncommitted changes; else the commits since the chosen conversation began; else the last commit
+            (--commit: one commit; --base: the commits of this branch since it left that branch or commit)
 shadow   -> no repository: AI Baton's private snapshots against the files now
 files    -> no git at all: the files the conversation changed, listed for the reviewer to read
 replies  -> no file changes: the agent's replies in the conversation (a plan, an answer, work outside the project)
@@ -128,17 +129,39 @@ def commit_patch(root, sha):
     return diff, names_note('The commit patch was cut; files in the commit', names)
 
 
-def collect_diff(root, commit=None, reviewer='codex', since=None):
+def collect_diff(root, commit=None, reviewer='codex', since=None, base=None):
     """(diff, what it covers, notes for the reviewer). The uncommitted changes with new files, or one commit, or
     the last commit when clean. With `since` (the commit a chosen conversation started from; '' when not known) a
     clean tree gives the commits after it instead, or nothing (its replies are the work) when there are none or the
     start is not known. Collection stops at MAX_DIFF; left-out files are named in the notes. All git calls together
-    get COLLECT_TIMEOUT."""
+    get COLLECT_TIMEOUT. With `base` (a branch or commit): the commits since HEAD left it (its merge base)."""
     DEADLINE.append(time.monotonic() + COLLECT_TIMEOUT)
     try:
+        if base:
+            return collect_branch(git_root(root), base)
         return collect(root, commit, reviewer, since)
     finally:
         DEADLINE.pop()
+
+
+def collect_branch(root, base):
+    if base.startswith('-'):
+        raise ReviewError(f'{base} is not a branch or commit.')
+    resolved = git(root, 'rev-parse', '--verify', '--quiet', base + '^{commit}', ok=(0, 1)).strip()
+    if not resolved:
+        raise ReviewError(f'{base} is not a branch or commit.')
+    start = git(root, 'merge-base', resolved, 'HEAD', ok=(0, 1)).strip()
+    if not start:
+        raise ReviewError(f'HEAD has no common history with {base}.')
+    sha = git(root, 'rev-parse', 'HEAD').strip()
+    if start == sha:
+        return '', 'nothing', ''
+    diff = git(root, 'diff', *SAFE_DIFF, '--stat', '--patch', start, sha, limit=MAX_DIFF)
+    notes = [] if '[output cut here' not in diff else [names_note(
+        'The diff was cut; files changed on this branch', [n for n in git(root, 'diff', '--name-only', '-z', start, sha).split('\0') if n])]
+    if git(root, 'status', '--porcelain', '--untracked-files=no').strip():
+        notes.append('Uncommitted changes are not part of this review; the working tree may differ from the last commit.')
+    return diff, f'the commits since {base} ({start[:12]}..{sha[:12]})', ' '.join(notes)
 
 
 def collect(root, commit, reviewer, since=None):
@@ -427,7 +450,7 @@ def author_context(project, session=None):
     return '\n\n'.join(parts)
 
 
-def review(start, agent, goal=None, commit=None, focus=None, session=None, model=None, effort=None):
+def review(start, agent, goal=None, commit=None, focus=None, session=None, model=None, effort=None, base=None):
     # A cancel at any stage (collecting the diff or reviewing) stops whatever is running, then exits.
     previous = {sig: signal.signal(sig, cancel) for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
@@ -435,7 +458,7 @@ def review(start, agent, goal=None, commit=None, focus=None, session=None, model
         root = find_root(start)
         token = start_review(root, agent, model, effort) if root else None
         try:
-            return reviewed(start, agent, goal, commit, focus, session, model, effort)
+            return reviewed(start, agent, goal, commit, focus, session, model, effort, base)
         finally:
             if token:
                 end_review(root, token)
@@ -468,7 +491,9 @@ def reviewer_choice(reviewer, model, effort):
     return model, effort
 
 
-def reviewed(start, agent, goal, commit, focus, session, model=None, effort=None):
+def reviewed(start, agent, goal, commit, focus, session, model=None, effort=None, base=None):
+    if commit and base:
+        raise ReviewError('Choose --commit or --base, not both.')
     project = find_root(start)  # AI Baton context (agents, memory, handoff) only.
     agents = load_agents(project)
     reviewer = next((a for a in agents if a['id'] == agent), None)
@@ -476,7 +501,7 @@ def reviewed(start, agent, goal, commit, focus, session, model=None, effort=None
         raise ReviewError(f'{agent} cannot review; choose one of: {", ".join(a["id"] for a in agents if a.get("review"))}')
     model, effort = reviewer_choice(reviewer, model, effort)
     start = Path(start).resolve()
-    snaps, before = session_work(project, session) if project and (session or not commit) else ([], None)
+    snaps, before = session_work(project, session) if project and (session or not (commit or base)) else ([], None)
     started = (before or {}).get('changes') or {}
     block = 'diff'
     if in_repository(start):
@@ -484,11 +509,11 @@ def reviewed(start, agent, goal, commit, focus, session, model=None, effort=None
         root = git_root(start)
         # For a chosen conversation, '' means its start is not known: never fall back to an unrelated commit.
         since = ((started.get('kind') == 'git' and started.get('commit')) or '') if session else None
-        diff, what, notes = collect_diff(root, commit, reviewer['review'], since)
+        diff, what, notes = collect_diff(root, commit, reviewer['review'], since, base)
     elif project is None:
         raise ReviewError('Review needs a git repository or a project set up with AI Baton (baton init).')
-    elif commit:
-        raise ReviewError('--commit needs a git repository.')
+    elif commit or base:
+        raise ReviewError(f'--{"commit" if commit else "base"} needs a git repository.')
     else:
         root = project
         if shutil.which('git') and (project / MEMORY_DIR / SHADOW_DIR).is_dir():

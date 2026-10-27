@@ -85,6 +85,7 @@ def main(argv=None):
     p.add_argument('goal', nargs='?', help='what the change is meant to do')
     p.add_argument('--agent', required=True, help='reviewer, e.g. codex or claude')
     p.add_argument('--commit', help='review this commit instead of the uncommitted changes')
+    p.add_argument('--base', help='review the commits of this branch since it left BASE (e.g. main), as a pull request')
     p.add_argument('--focus', help='what the reviewer should pay special attention to')
     p.add_argument('--session', help='session whose work this is (its summary tells the reviewer the goal)')
     p.add_argument('--model', help='reviewer model for this review only (default: as configured for the agent)')
@@ -194,7 +195,7 @@ def main(argv=None):
     elif args.command == 'review':
         try:
             result = review.review(args.path, args.agent, args.goal, args.commit, args.focus, args.session,
-                                   args.model, args.effort)
+                                   args.model, args.effort, args.base)
         except review.ReviewError as error:
             sys.exit(f'Error: {error}')
         print(json.dumps(result, ensure_ascii=False) if args.json
