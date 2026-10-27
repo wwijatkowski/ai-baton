@@ -2,7 +2,7 @@
 
 A short, current state of the work for the next agent. Replace outdated content; do not keep history here (that is what Git and `docs/knowledge/` are for).
 
-**Last updated:** 2026-10-28 (night), Claude
+**Last updated:** 2026-10-28 (night, 0.5.1 release), Claude
 
 ## Current state
 AI Baton 0.5.0 (preview) is PUBLISHED on the VS Code Marketplace and Open VSX (`wwijatkowski.ai-baton`, 2026-10-27; every release since v0.4.0 is published by `release.yml` from its version tag, with a GitHub release holding the .vsix). The repo `github.com/wwijatkowski/ai-baton` is public.
@@ -32,12 +32,7 @@ Releasing (no stored tokens, see 1): bump the version and add a CHANGELOG sectio
 3. Publisher display name (waiting for VSMarketplace@microsoft.com). The user does not want promotional posts for now.
 4. Listing (0.4.1, released): display name "AI Baton: Claude Code & Codex memory, handoff, review" for Marketplace search (it weighs the name most; the id stays, so it can go back to "AI Baton" any time), wider keywords, Cursor/Windsurf via Open VSX in the description. The README starts with `media/screenshots/demo.gif` (33 s, 1.6 MB): recorded by Claude desktop with `screencapture -v` in a throwaway project, cut and sped up with ffmpeg; the raw video is `~/Movies/ai-baton-demo.mov`.
 5. Done: 0.5.0 released; Copilot hooks built on `copilot-hooks`.
-6. Next (2026-10-28, branch `copilot-hooks`, PR #10): release 0.5.1.
-   - Codex review round 3 (`baton review --base f3f7934`, xhigh) done; proposed decisions, waiting for the user's "ok":
-     1. P1 accept: a claimed receipt outlives a killed Stop or a failed rollback, so that reply is never saved. Plan (Codex's simpler option): drop the receipt claim; a per-conversation OS lock (`.copilot-stop-<hash of session>.lock`, bounded by the budget) held through capture and save. Parallel chats still do not wait for each other, a dead process releases it, receipts are written only after the checkpoint and history.
-     2. P2 accept: an older Stop of the same chat could still snapshot the shadow repo and drop it (HEAD ahead of the saved checkpoint). Fixed by the same per-conversation lock: under it, re-read the reply and skip before capturing. Extend the test with an edit after the newer Stop saves.
-     3. P2 accept: `changes.from_shadow` writes `info/exclude` and `info/attributes` without the deadline; pass it on. Windows test: refuse only selected writes, check the whole Stop's time.
-   - Then: live round again (`node tests/live/run.js round`, the Stop code changed), rebuild `ai-baton-0.5.1.vsix`, tell the user to paste the Claude desktop card prompt (round 10; add a step: New chat on the card opens a Copilot CLI chat), check its report, CI green, merge, tag v0.5.1.
+6. Done 2026-10-28: 0.5.1 released from PR #10 (tag v0.5.1): native Copilot hooks, `baton review --base`, review fixes. Verified: unit tests, CI (Linux, Windows, macOS), live rounds with the real Copilot (all green, 7 messages), UI round 10 by Claude desktop (all PASS, `docs/UI_TEST_REPORT.md`), Codex reviews in five rounds (all accepted points in; the Copilot Stop now takes a per-conversation lock, writes checkpoint and receipt under the shared lock, every lock and Windows retry within its 7 s budget, at-least-once after a crash). Check the stores show 0.5.1 (about 5 minutes after the tag).
 7. After 0.5.1: start collecting token-saving metrics now (STATUS To do 6); the user wants a summary after some weeks of real work.
 
 ## How we work (user's preferences)
