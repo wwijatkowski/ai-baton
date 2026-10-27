@@ -1,5 +1,6 @@
 import io
 import shutil
+import signal
 import os
 from datetime import datetime, timezone
 import json
@@ -21,6 +22,8 @@ from baton.project import read_json  # noqa: E402
 project.USER_AGENTS = Path(tempfile.gettempdir()) / 'ai-baton-tests-none' / 'agents.json'
 # Nor the real user-level hooks (with them installed, init would skip project hooks).
 init_project.user_home = lambda: Path(tempfile.gettempdir()) / 'ai-baton-tests-none' / 'home'
+# Nor the real list of review sessions (Claude reviews record theirs).
+models.REVIEW_SESSIONS = Path(tempfile.gettempdir()) / f'ai-baton-tests-reviews-{os.getpid()}.json'
 # Nor which agents happen to be installed here: tests assume both are.
 init_project.agent_binary = lambda kind: f'/usr/bin/{kind}'
 
@@ -575,6 +578,501 @@ class MemoryTiersTest(unittest.TestCase):
         self.assertIn('payments', recall.render(hits[0], ['payments'], False))
 
 
+def copilot_events(user_text, *replies, partial=False, session='cp1'):
+    """A Copilot events.jsonl as the runtime writes it (observed 2026-10-27, copilot-agent 1.0.100): `replies` are
+    (phase, content, messageId) after the user's message."""
+    events = [{'type': 'session.start', 'data': {'sessionId': session, 'producer': 'copilot-agent'}},
+              {'type': 'user.message', 'data': {'content': user_text}},
+              {'type': 'assistant.turn_start', 'data': {'turnId': '0'}}]
+    events += [{'type': 'assistant.message', 'data': {'phase': phase, 'content': content, 'messageId': mid}}
+               for phase, content, mid in replies]
+    events.append({'type': 'assistant.turn_end', 'data': {'turnId': '0'}})
+    text = ''.join(json.dumps(e) + '\n' for e in events)
+    return text + ('{"type": "assistant.mess' if partial else '')
+
+
+class CopilotHooksTest(unittest.TestCase):
+    """Copilot's own hooks (~/.copilot/hooks/ai-baton.json): context at SessionStart, the reply read at Stop."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.project = base / 'demo'
+        self.project.mkdir()
+        init_project.init(self.project)
+        self.home = base / 'copilot-home'
+        self.registry = base / 'agents.json'
+        self.registry.write_text(json.dumps({'agents': [{'id': 'copilot', 'label': 'Copilot', 'extension': 'GitHub.copilot-chat',
+                                                         'openCommand': 'workbench.action.chat.open'}]}))
+        for patch in (mock.patch.dict(os.environ, {'COPILOT_HOME': str(self.home)}),
+                      mock.patch.object(project, 'USER_AGENTS', self.registry),
+                      mock.patch.object(init_project, 'user_home', return_value=base / 'home'),
+                      mock.patch.object(hook, 'COPILOT_REPLY_WAIT', 0)):  # No waiting unless a test asks for it.
+            patch.start()
+            self.addCleanup(patch.stop)
+        os.environ.pop('COPILOT_PROJECT_DIR', None)
+
+    def transcript(self, session, text):
+        path = self.home / 'session-state' / session / 'events.jsonl'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return str(path)
+
+    def stop(self, session, path):
+        now = datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')  # Copilot's form.
+        return hook.run('copilot', payload(self.project, 'Stop', session, transcript_path=path, timestamp=now,
+                                           stop_reason='end_turn'), user_level=True)
+
+    def test_install_status_and_uninstall(self):
+        self.assertEqual([a.get('hooks') for a in project.load_agents() if a['id'] == 'copilot'], ['copilot'])
+        self.assertEqual(hookcheck.status(self.project)['copilot']['state'], 'missing')
+        init_project.install_user_hooks(None)  # Not named: Copilot has no CLI to detect, so it is left out.
+        self.assertFalse(init_project.copilot_hook_file().exists())
+        log = init_project.install_user_hooks({'copilot'})
+        config = json.loads(init_project.copilot_hook_file().read_text())
+        self.assertEqual(config['version'], 1)
+        self.assertEqual(sorted(config['hooks']), sorted(init_project.EVENTS))
+        entry = config['hooks']['Stop'][0]
+        self.assertTrue(entry['command'].endswith(' hook copilot --global'), entry)
+        self.assertEqual(entry['timeoutSec'], 10)
+        self.assertIn('ai-baton.json', log[0])
+        self.assertEqual(hookcheck.status(self.project)['copilot'], {'state': 'ok', 'detail': 'installed (user)'})
+        self.assertEqual(hookcheck.user_status()['copilot']['state'], 'ok')
+        self.assertFalse((self.project / '.github').exists())  # Never in a project.
+        init_project.uninstall_hooks({'copilot'})
+        self.assertFalse(init_project.copilot_hook_file().exists())
+        self.assertTrue(init_project.copilot_hook_file().parent.exists())  # Copilot's folder stays.
+
+    def test_only_the_real_copilot_entry_gets_hooks(self):
+        self.registry.write_text(json.dumps({'agents': [
+            {'id': 'copilot', 'label': 'Copilot', 'extension': 'someone.else', 'openCommand': 'x'},
+            {'id': 'other', 'label': 'Other', 'extension': 'github.copilot-chat', 'openCommand': 'x'}]}))
+        self.assertFalse([a for a in project.load_agents() if a.get('hooks') == 'copilot'])
+        self.registry.write_text(json.dumps({'agents': []}))
+        marker = self.project / project.MARKER
+        data = json.loads(marker.read_text())
+        data['extraAgents'] = [{'id': 'copilot', 'label': 'C', 'extension': 'github.copilot-chat', 'openCommand': 'x'}]
+        marker.write_text(json.dumps(data))
+        self.assertFalse([a for a in project.load_agents(self.project) if a.get('hooks') == 'copilot'])  # Not from a repo.
+
+    def test_context_at_session_start_and_reply_saved_at_stop(self):
+        hook.run('codex', payload(self.project, 'Stop', 'c1', last_assistant_message='Codex fixed the parser.'))
+        start = hook.run('copilot', payload(self.project, 'SessionStart', 'cp1', timestamp='t', source='new'), user_level=True)
+        self.assertEqual(list(start), ['additionalContext'])  # The Copilot runtime's documented output.
+        self.assertIn('Codex fixed the parser.', start['additionalContext'])
+        self.assertIn('Your AI Baton session_id: cp1', start['additionalContext'])
+        self.assertIn('saved by AI Baton', start['additionalContext'])
+        # Copilot drops this output: it only marks the turn, it must not mark checkpoints as seen.
+        seen = (self.project / '.agent-memory' / 'seen.json').read_text()
+        hook.run('codex', payload(self.project, 'Stop', 'c1', last_assistant_message='Codex added tests.'))
+        self.assertEqual(hook.run('copilot', payload(self.project, 'UserPromptSubmit', 'cp1', timestamp='t'), user_level=True), {})
+        self.assertEqual((self.project / '.agent-memory' / 'seen.json').read_text(), seen)
+        activity = read_json(self.project / '.agent-memory' / 'activity.json')
+        self.assertEqual(activity['copilot']['sessions']['cp1']['state'], 'working')
+        again = hook.run('copilot', payload(self.project, 'SessionStart', 'cp1', timestamp='t'), user_level=True)
+        self.assertIn('Codex added tests.', again['additionalContext'])  # SessionStart always delivers everything.
+
+        path = self.transcript('cp1', copilot_events('fix it', ('commentary', 'Looking at the code.', 'm1'),
+                                                     ('final_answer', 'Fixed the bug in parser.py.', 'm2'), partial=True))
+        self.assertEqual(self.stop('cp1', path), {})
+        snap = read_json(self.project / '.agent-memory' / 'copilot.json')
+        self.assertEqual((snap['last_reply'], snap['message_id'], snap['client'], snap['session_id']),
+                         ('Fixed the bug in parser.py.', 'm2', 'copilot-agent', 'cp1'))
+        self.assertEqual(read_json(self.project / '.agent-memory' / 'activity.json')['copilot']['sessions']['cp1']['state'], 'idle')
+        history = (self.project / '.agent-memory' / 'history.jsonl').read_text().splitlines()
+        self.stop('cp1', path)  # The same Stop again: nothing new.
+        self.assertEqual((self.project / '.agent-memory' / 'history.jsonl').read_text().splitlines(), history)
+        self.assertIn('Fixed the bug in parser.py.', context(hook.run('codex', payload(self.project, 'SessionStart', 'c2'))))
+
+    def test_stop_waits_for_a_reply_written_after_it(self):
+        # Seen live: Copilot runs Stop a few milliseconds before the final answer reaches events.jsonl.
+        import threading
+        first = copilot_events('hi', ('final_answer', 'Hello.', 'm1'), session='late')
+        path = self.transcript('late', first)
+        self.stop('late', path)
+        turn = first + copilot_events('again', ('final_answer', 'Hello again.', 'm2'), session='late').split('\n', 1)[1]
+        Path(path).write_text(turn.rsplit('{"type": "assistant.message"', 1)[0])  # The new turn, its answer not yet.
+        writer = threading.Timer(0.3, lambda: Path(path).write_text(turn))
+        writer.start()
+        self.addCleanup(writer.cancel)
+        with mock.patch.object(hook, 'COPILOT_REPLY_WAIT', 2.0):
+            started = time.monotonic()
+            self.stop('late', path)
+        self.assertEqual(read_json(self.project / '.agent-memory' / 'copilot.json')['last_reply'], 'Hello again.')
+        self.assertLess(time.monotonic() - started, 1.5)  # Returned as soon as the answer was there.
+        with mock.patch.object(hook, 'COPILOT_REPLY_WAIT', 0.3):
+            started = time.monotonic()
+            self.stop('late', path)  # Nothing new: gives up after the wait, saves nothing twice.
+        self.assertGreaterEqual(time.monotonic() - started, 0.3)
+        self.assertLess(time.monotonic() - started, 1.5)
+        self.assertEqual(sum('"copilot"' in line for line in
+                             (self.project / '.agent-memory' / 'history.jsonl').read_text().splitlines()), 2)
+
+    def test_stop_past_its_budget_still_saves_without_git(self):
+        path = self.transcript('slow', copilot_events('x', ('final_answer', 'Done late.', 'm1'), session='slow'))
+        with mock.patch.object(hook, 'COPILOT_STOP_BUDGET', 0), \
+                mock.patch.object(changes, 'git', return_value=None) as git:  # What git() gives past a deadline.
+            self.stop('slow', path)
+        self.assertEqual(read_json(self.project / '.agent-memory' / 'copilot.json')['last_reply'], 'Done late.')
+        self.assertTrue(all(call.kwargs.get('deadline') is not None for call in git.call_args_list), git.call_args_list)
+
+    def test_unsure_transcripts_save_nothing(self):
+        done = ('final_answer', 'Done.', 'm1')
+        lines = lambda text: text.splitlines(keepends=True)
+        good = lines(copilot_events('x', ('commentary', 'Working.', 'm0'), done, session='s'))
+        bad_user = json.dumps({'type': 'user.message', 'data': None}) + '\n'
+        cases = {
+            'commentary only': copilot_events('x', ('commentary', 'Working on it.', 'm1'), session='s'),
+            'no user message in it': ''.join(good[:1] + good[3:]),
+            'not JSON': 'garbage\n',
+            'damaged current user message': ''.join(good + [bad_user] + good[3:]),
+            'damaged line inside the turn': ''.join(good[:3] + ['{"type": "assistant.mes\n'] + good[3:]),
+            'damaged last record': ''.join(good) + '{"type": "user.mess\n',  # Complete (newline-ended), so not still being written.
+            'header of another conversation': copilot_events('x', done, session='other'),
+            'newer final without content': copilot_events('x', done, ('final_answer', None, 'm2'), session='s'),
+            'newer final without messageId': copilot_events('x', done, ('final_answer', 'Later.', None), session='s'),
+        }
+        for name, text in cases.items():
+            self.assertIsNone(hook.copilot_reply(self.transcript('s', text), 's'), name)
+            self.assertEqual(self.stop('s', self.transcript('s', text)), {}, name)
+        outside = Path(self.tmp.name) / 'events.jsonl'
+        outside.write_text(copilot_events('x', ('final_answer', 'Done.', 'm1')))
+        self.stop('s-out', str(outside))
+        self.assertIsNone(hook.copilot_reply(str(outside)))
+        if not WINDOWS:
+            link = self.home / 'session-state' / 'link' / 'events.jsonl'
+            link.parent.mkdir(parents=True)
+            link.symlink_to(outside)
+            self.assertIsNone(hook.copilot_reply(str(link)))  # Resolves outside Copilot's folder.
+        self.assertFalse((self.project / '.agent-memory' / 'copilot.json').exists())
+        # A turn with a final answer later still saves.
+        self.stop('s-ok', self.transcript('s-ok', copilot_events('x', ('final_answer', 'Done.', 'm9'), session='s-ok')))
+        self.assertEqual(read_json(self.project / '.agent-memory' / 'copilot.json')['last_reply'], 'Done.')
+
+    def test_long_transcript_reads_only_the_end(self):
+        old = copilot_events('old', ('final_answer', 'Old answer.', 'm0'))
+        filler = json.dumps({'type': 'session.usage_record', 'data': {'pad': 'x' * 1000}}) + '\n'
+        text = old + filler * (hook.COPILOT_TAIL // len(filler) + 5) + copilot_events('new', ('final_answer', 'New answer.', 'm1'))
+        self.assertEqual(hook.copilot_reply(self.transcript('long', text), 'cp1')['reply'], 'New answer.')
+        # The turn's user message fell out of the tail: unsure, so nothing.
+        text = copilot_events('new', ('commentary', 'x', 'm0')).rsplit('\n', 2)[0] + '\n' + filler * (hook.COPILOT_TAIL // len(filler) + 5)
+        text += json.dumps({'type': 'assistant.message', 'data': {'phase': 'final_answer', 'content': 'Late.', 'messageId': 'm5'}}) + '\n'
+        self.assertIsNone(hook.copilot_reply(self.transcript('long2', text), 'cp1'))
+
+    def test_project_folder_from_copilot(self):
+        other = Path(self.tmp.name) / 'sibling'
+        other.mkdir()
+        with mock.patch.dict(os.environ, {'COPILOT_PROJECT_DIR': str(self.project)}):
+            start = hook.run('copilot', payload(other, 'SessionStart', 'cp1', timestamp='t'), user_level=True)
+        self.assertIn('AI Baton', start['additionalContext'])
+
+    def test_memory_tools_defer_to_hooks_that_ran(self):
+        from baton import mcp
+        server = mcp.Server('copilot')
+        init_project.install_user_hooks({'copilot'})
+        # Installed is not proof: a chat without the hook's session_id is asked to save.
+        self.assertIn('call baton_checkpoint with it', server.baton_context({'project_path': str(self.project)}))
+        self.assertIn('call baton_checkpoint with it', server.baton_context({'project_path': str(self.project), 'session_id': 'cp1'}))
+        hook.run('copilot', payload(self.project, 'UserPromptSubmit', 'cp1', timestamp='t'), user_level=True)
+        text = server.baton_context({'project_path': str(self.project), 'session_id': 'cp1'})
+        self.assertNotIn('call baton_checkpoint with it', text)
+        self.assertIn('saved by AI Baton', text)
+        # Its own checkpoint through the tool keeps the hook mark.
+        server.baton_checkpoint({'project_path': str(self.project), 'session_id': 'cp1', 'summary': 'Saved by hand.'})
+        self.assertTrue(hook.hook_ran(self.project / '.agent-memory', 'copilot', 'cp1'))
+        # Hooks removed while the chat goes on: nothing saves its turns any more, so it is asked to.
+        init_project.uninstall_hooks({'copilot'})
+        self.assertFalse(hook.hook_ran(self.project / '.agent-memory', 'copilot', 'cp1'))
+        self.assertIn('call baton_checkpoint with it', server.baton_context({'project_path': str(self.project), 'session_id': 'cp1'}))
+
+    def test_parallel_stops_with_slow_change_capture_both_save(self):
+        import threading
+        paths = {sid: self.transcript(sid, copilot_events(sid, ('final_answer', f'Answer {sid}.', f'm{sid}'), session=sid))
+                 for sid in ('A', 'B')}
+        real = hook.changes.capture
+
+        def slow(*args, **kwargs):
+            time.sleep(3.5)  # Longer than the usual lock wait: captured inside the lock, B would give up.
+            return real(*args, **kwargs)
+        errors = []
+
+        def stop(sid):
+            try:
+                self.stop(sid, paths[sid])
+            except Exception as error:  # noqa: BLE001 (reported below)
+                errors.append(error)
+        with mock.patch.object(hook.changes, 'capture', slow):
+            threads = [threading.Thread(target=stop, args=(sid,)) for sid in paths]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(errors, [])
+        history = (self.project / '.agent-memory' / 'history.jsonl').read_text()
+        self.assertIn('Answer A.', history)
+        self.assertIn('Answer B.', history)
+
+    def shadow_head(self):
+        return subprocess.run(['git', '--git-dir', str(self.project / '.agent-memory' / 'shadow.git'), 'rev-parse', '--short',
+                               'HEAD'], capture_output=True, text=True).stdout.strip()
+
+    def test_stops_of_one_chat_take_turns_and_save_each_reply_once(self):
+        import threading
+        mem = self.project / '.agent-memory'
+        first = copilot_events('x', ('final_answer', 'First.', 'm1'), session='s')
+        both = first + copilot_events('y', ('final_answer', 'Second.', 'm2'), session='s').split('\n', 1)[1]
+        path = self.transcript('s', first)
+        real, captured, inside = hook.changes.capture, [], threading.Event()
+
+        def capture(*args, **kwargs):
+            captured.append(args[3])
+            inside.set()
+            time.sleep(0.5)  # The others arrive meanwhile and wait for this chat's lock.
+            return real(*args, **kwargs)
+        errors = []
+
+        def stop():
+            try:
+                self.stop('s', path)
+            except Exception as error:  # noqa: BLE001 (reported below)
+                errors.append(error)
+        with mock.patch.object(hook.changes, 'capture', capture):
+            threads = [threading.Thread(target=stop)]
+            threads[0].start()
+            inside.wait(5)
+            threads.append(threading.Thread(target=stop))  # The same Stop again.
+            (self.project / 'later.txt').write_text('second turn\n')
+            Path(path).write_text(both)
+            threads.append(threading.Thread(target=stop))  # The next turn's Stop.
+            for thread in threads[1:]:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(len(captured), 2)  # m1 and m2 once each; the repeat took no snapshot.
+        saved = read_json(mem / 'copilot.json')
+        self.assertEqual((saved['last_reply'], saved['message_id']), ('Second.', 'm2'))
+        entries = [json.loads(l) for l in (mem / 'history.jsonl').read_text().splitlines() if '"agent": "copilot"' in l]
+        self.assertEqual(sorted(e['message_id'] for e in entries), ['m1', 'm2'])
+        if saved['changes']['kind'] == 'shadow':
+            self.assertEqual(saved['changes']['commit'], self.shadow_head())
+        # A late Stop after the newer reply was saved, with new edits since: it touches nothing, snapshots included.
+        (self.project / 'after.txt').write_text('edited after the save\n')
+        head = self.shadow_head()
+        with mock.patch.object(hook.changes, 'capture', side_effect=AssertionError('no snapshot')):
+            self.stop('s', path)
+        self.assertEqual(self.shadow_head(), head)
+
+    def test_a_stop_that_fails_leaves_the_reply_to_the_next(self):
+        path = self.transcript('s', copilot_events('x', ('final_answer', 'Done.', 'm1'), session='s'))
+        with mock.patch.object(hook, 'save_checkpoint', side_effect=TimeoutError('busy')), self.assertRaises(TimeoutError):
+            self.stop('s', path)
+        self.assertIsNone(hook.copilot_saved(self.project / '.agent-memory', 's'))
+        # Killed while holding its lock: the lock goes with the process, so the next Stop is not kept out.
+        killed = subprocess.Popen([sys.executable, '-c', 'import sys, time; sys.path.insert(0, sys.argv[1]); '
+                                   'from baton import project, hook; from pathlib import Path; '
+                                   'ctx = project.file_lock(hook.stop_lock(Path(sys.argv[2]), "s")); ctx.__enter__(); '
+                                   'print("held", flush=True); time.sleep(60)', str(Path(__file__).resolve().parents[1]),
+                                   str(self.project / '.agent-memory')], stdout=subprocess.PIPE, text=True)
+        self.assertEqual(killed.stdout.readline().strip(), 'held')
+        killed.kill()
+        killed.wait()
+        killed.stdout.close()
+        self.stop('s', path)
+        self.assertEqual(read_json(self.project / '.agent-memory' / 'copilot.json')['message_id'], 'm1')
+
+    def test_windows_write_retries_stay_within_the_budget(self):
+        real = os.replace
+        for held in ('exclude', 'attributes'):  # Shadow metadata another process keeps open: the file list instead.
+            path = self.transcript(held, copilot_events('x', ('final_answer', f'Done {held}.', f'm-{held}'), session=held))
+            refused = []
+
+            def replace(src, dst, *args, **kwargs):
+                if Path(dst).name == held:
+                    refused.append(time.monotonic())
+                    raise PermissionError('in use')
+                return real(src, dst, *args, **kwargs)
+            started = time.monotonic()
+            with mock.patch.object(project, 'WINDOWS', True), mock.patch.object(hook, 'COPILOT_STOP_BUDGET', 1.6), \
+                    mock.patch.object(hook, 'COPILOT_PERSIST_RESERVE', 1.3), mock.patch.object(project.os, 'replace', replace):
+                self.stop(held, path)
+            saved = read_json(self.project / '.agent-memory' / 'copilot.json')
+            self.assertEqual((saved['message_id'], saved['changes']['kind']), (f'm-{held}', 'files'), held)
+            # Retries stopped at the capture's deadline (0.3 s in), not after the usual 20 tries (about 1 s).
+            self.assertLess(refused[-1] - started, 0.6, held)
+            self.assertLess(len(refused), 15, held)
+            self.assertLess(time.monotonic() - started, 2.1, held)  # The whole Stop within its budget.
+        # The checkpoint itself held open: the Stop fails within its budget and leaves no receipt (the next one saves).
+        path = self.transcript('c', copilot_events('x', ('final_answer', 'Done c.', 'm-c'), session='c'))
+
+        def refuse_checkpoint(src, dst, *args, **kwargs):
+            if Path(dst).name == 'copilot.json':
+                raise PermissionError('in use')
+            return real(src, dst, *args, **kwargs)
+        started = time.monotonic()
+        with mock.patch.object(project, 'WINDOWS', True), mock.patch.object(hook, 'COPILOT_STOP_BUDGET', 1.6), \
+                mock.patch.object(project.os, 'replace', refuse_checkpoint), self.assertRaises(PermissionError):
+            self.stop('c', path)
+        self.assertLess(time.monotonic() - started, 2.1)
+        self.assertIsNone(hook.copilot_saved(self.project / '.agent-memory', 'c'))
+
+    def test_a_stop_that_dies_before_its_receipt_saves_again(self):
+        path = self.transcript('s', copilot_events('x', ('final_answer', 'Done.', 'm1'), session='s'))
+        with mock.patch.object(hook, 'set_receipt', side_effect=PermissionError('in use')), self.assertRaises(PermissionError):
+            self.stop('s', path)
+        self.stop('s', path)  # At least once: saved again, never lost.
+        self.stop('s', path)  # Now with its receipt: not again.
+        history = (self.project / '.agent-memory' / 'history.jsonl').read_text()
+        self.assertEqual(history.count('"message_id": "m1"'), 2)
+
+    def test_chats_sharing_a_lock_file_both_save(self):
+        import threading
+        ids, slot = [], None
+        for n in range(1000):  # Two conversations whose Stops use the same lock file.
+            if slot is None:
+                slot = hook.stop_lock(Path('m'), f'c{n}')
+                ids.append(f'c{n}')
+            elif hook.stop_lock(Path('m'), f'c{n}') == slot:
+                ids.append(f'c{n}')
+                break
+        paths = {sid: self.transcript(sid, copilot_events(sid, ('final_answer', f'Answer {sid}.', f'm{sid}'), session=sid))
+                 for sid in ids}
+        self.assertEqual(len(ids), 2)
+        self.stalled(hook.changes, 'capture', ids, paths)
+
+    def test_a_slow_save_of_one_chat_does_not_drop_another_chats_reply(self):
+        ids = ['p', 'q']
+        self.assertNotEqual(hook.stop_lock(Path('m'), 'p'), hook.stop_lock(Path('m'), 'q'))  # Different chat locks.
+        paths = {sid: self.transcript(sid, copilot_events(sid, ('final_answer', f'Answer {sid}.', f'm{sid}'), session=sid))
+                 for sid in ids}
+        self.stalled(hook, 'save_checkpoint', ids, paths)  # Under the lock every chat shares.
+
+    def stalled(self, owner, name, ids, paths):
+        """Two Stops at once, the first held 3.5 s (longer than the usual lock wait) in owner.name: both replies
+        are saved, each Stop within its budget."""
+        import threading
+        real, calls, errors, took = getattr(owner, name), [], [], {}
+
+        def slow(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                time.sleep(3.5)
+            return real(*args, **kwargs)
+
+        def stop(sid):
+            started = time.monotonic()
+            try:
+                self.stop(sid, paths[sid])
+            except Exception as error:  # noqa: BLE001 (reported below)
+                errors.append(error)
+            took[sid] = time.monotonic() - started
+        with mock.patch.object(owner, name, slow):
+            threads = [threading.Thread(target=stop, args=(sid,)) for sid in ids]
+            for thread in threads:
+                thread.start()
+                time.sleep(0.2)  # The first one goes first.
+            for thread in threads:
+                thread.join()
+        self.assertEqual(errors, [])
+        history = (self.project / '.agent-memory' / 'history.jsonl').read_text()
+        self.assertTrue(all(f'Answer {sid}.' in history for sid in ids), ids)
+        self.assertTrue(all(t < hook.COPILOT_STOP_BUDGET + 1 for t in took.values()), took)
+
+    def test_stop_keeps_its_budget_while_a_lock_is_held(self):
+        path = self.transcript('s', copilot_events('x', ('final_answer', 'Done.', 'm1'), session='s'))
+        started = time.monotonic()
+        with mock.patch.object(hook, 'COPILOT_STOP_BUDGET', 1), project.file_lock(self.project / '.agent-memory' / '.history.lock'):
+            with self.assertRaises(TimeoutError):  # The CLI reports it; the agent goes on.
+                self.stop('s', path)
+        self.assertLess(time.monotonic() - started, 2.5)
+
+    def test_a_stop_saves_once_per_reply_in_each_conversation(self):
+        a = self.transcript('A', copilot_events('a', ('final_answer', 'Answer A.', 'mA'), session='A'))
+        b = self.transcript('B', copilot_events('b', ('final_answer', 'Answer B.', 'mB'), session='B'))
+        history = lambda: (self.project / '.agent-memory' / 'history.jsonl').read_text().count('"agent": "copilot"')
+        self.stop('A', a)
+        self.stop('B', b)
+        self.stop('A', a)  # A late repeat of A's Stop must not put A's old answer over B's.
+        self.assertEqual(history(), 2)
+        self.assertEqual(read_json(self.project / '.agent-memory' / 'copilot.json')['last_reply'], 'Answer B.')
+        for n in range(hook.MAX_SESSIONS + 2):  # Activity forgets older conversations; the receipts do not.
+            self.stop(f'x{n}', self.transcript(f'x{n}', copilot_events('x', ('final_answer', f'X{n}.', f'mx{n}'), session=f'x{n}')))
+        self.stop('A', a)
+        self.assertEqual(history(), 2 + hook.MAX_SESSIONS + 2)
+        # A late Stop reads the transcript as it is now, inside the lock: it never saves an older reply over a newer one.
+        late = self.transcript('L', copilot_events('l', ('final_answer', 'Old L.', 'mL1'), session='L'))
+        self.stop('L', late)
+        Path(late).write_text(copilot_events('l', ('final_answer', 'Old L.', 'mL1'), session='L') +
+                              copilot_events('l2', ('final_answer', 'New L.', 'mL2'), session='L').split('\n', 1)[1])
+        self.stop('L', late)
+        self.stop('L', late)
+        self.assertEqual(read_json(self.project / '.agent-memory' / 'copilot.json')['last_reply'], 'New L.')
+        base = history()
+        import threading
+        c = self.transcript('C', copilot_events('c', ('final_answer', 'Answer C.', 'mC'), session='C'))
+        threads = [threading.Thread(target=self.stop, args=('C', c)) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(history(), base + 1)
+
+    def test_a_stop_waiting_for_the_lock_reads_the_newest_reply(self):
+        # The first Stop is held before the lock while a second one saves a newer reply; released, it must not put
+        # the older reply back (it reads the transcript inside the lock).
+        import threading
+        path = self.transcript('R', copilot_events('r', ('final_answer', 'Old R.', 'mR1'), session='R'))
+        real_lock, held, go = hook.file_lock, threading.Event(), threading.Event()
+
+        def gated(lock, **options):
+            if threading.current_thread().name == 'first':
+                held.set()
+                go.wait(10)
+            return real_lock(lock, **options)
+
+        errors = []
+
+        def first():
+            try:
+                self.stop('R', path)
+            except Exception as error:  # Reported below: a failing thread must fail the test.
+                errors.append(error)
+
+        with mock.patch.object(hook, 'file_lock', gated):
+            worker = threading.Thread(target=first, name='first')
+            worker.start()
+            self.assertTrue(held.wait(10))
+            Path(path).write_text(copilot_events('r', ('final_answer', 'Old R.', 'mR1'), session='R') +
+                                  copilot_events('r2', ('final_answer', 'New R.', 'mR2'), session='R').split('\n', 1)[1])
+            self.stop('R', path)
+            go.set()
+            worker.join(10)
+        self.assertEqual(errors, [])
+        self.assertEqual(read_json(self.project / '.agent-memory' / 'copilot.json')['last_reply'], 'New R.')
+        self.assertEqual((self.project / '.agent-memory' / 'history.jsonl').read_text().count('"message_id": "mR2"'), 1)
+
+    def test_a_late_stop_leaves_the_next_turn_working(self):
+        path = self.transcript('W', copilot_events('w', ('commentary', 'Still going.', 'm1'), session='W'))
+        hook.run('copilot', payload(self.project, 'UserPromptSubmit', 'W', timestamp='t'), user_level=True)
+        state = lambda: read_json(self.project / '.agent-memory' / 'activity.json')['copilot']['sessions']['W']['state']
+        hook.run('copilot', payload(self.project, 'Stop', 'W', transcript_path=path, timestamp='2020-01-01T00:00:00.000Z'),
+                 user_level=True)  # Fired before this turn started.
+        self.assertEqual(state(), 'working')
+        self.stop('W', path)  # Fired now, after the turn started.
+        self.assertEqual(state(), 'idle')
+
+    def test_odd_hook_files_and_uninstall_without_the_agent(self):
+        init_project.copilot_hook_file().parent.mkdir(parents=True)
+        for text in ('{"hooks": ["unexpected"]}', '[]', '{"version": 2, "hooks": {}}', 'not json'):
+            init_project.copilot_hook_file().write_text(text)
+            self.assertEqual(hookcheck.status(self.project)['copilot']['state'], 'missing', text)
+        init_project.install_user_hooks({'copilot'})
+        self.registry.write_text(json.dumps({'agents': []}))  # Copilot removed from the panel.
+        self.assertTrue(init_project.uninstall_hooks({'copilot'}))
+        self.assertFalse(init_project.copilot_hook_file().exists())
+
+
 class ModelsTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -638,6 +1136,22 @@ class ModelsTest(unittest.TestCase):
         log.write_text('{"message":{"model":"claude-opus-5-5"}}\n')
         with mock.patch.object(models, 'CLAUDE_PROJECTS', log.parents[1]):
             self.assertEqual(models.claude()['defaultLabel'], 'last used: Opus 5.5')
+            # A newer transcript from a `baton review` run does not count; its tokens still do (usage reads it).
+            with mock.patch.object(models, 'REVIEW_SESSIONS', Path(self.tmp.name) / 'reviews.json'):
+                review_log = log.parent / '0f8e7c1a-3b2d-4e5f-8a9b-0c1d2e3f4a5b.jsonl'
+                review_log.write_text('{"message":{"model":"claude-haiku-5-5"}}\n')
+                os.utime(review_log, (time.time() + 60, time.time() + 60))
+                self.assertEqual(models.claude()['defaultLabel'], 'last used: Haiku 5.5')
+                models.add_review_session(review_log.stem)
+                self.assertEqual(models.claude()['defaultLabel'], 'last used: Opus 5.5')
+                import threading
+                ids = [f'r{n}' for n in range(8)]
+                threads = [threading.Thread(target=models.add_review_session, args=(i,)) for i in ids]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
+                self.assertTrue(set(ids) <= set(models.review_sessions()))  # None lost to a parallel review.
 
     def test_rejects_bad_values_and_broken_files(self):
         with self.assertRaises(models.ModelError):
@@ -754,6 +1268,62 @@ class ReviewTest(unittest.TestCase):
     def fake(self, name, code):
         self.tools[name] = fake_tool(self.bin, name, code)
 
+    def test_a_running_review_shows_as_reviewing_and_leaves_memory_alone(self):
+        # The stand-in reviewer reports what the panel would see while it runs.
+        self.fake('claude', "import json, sys\nsys.path.insert(0, " + repr(str(ROOT)) + ")\nfrom baton import status\n"
+                            "agents = status.project_status('.')['agents']\n"
+                            "print('during: ' + json.dumps({a['id']: a['reviewing'] for a in agents}))\n")
+        (self.project / 'NEW.md').write_text('x\n')
+        mem = self.project / '.agent-memory'
+        before = {f.name: f.read_bytes() for f in mem.iterdir() if f.is_file() and f.name not in ('reviews.json', '.reviews.lock')}
+        text = review.review(self.project, 'claude', 'goal', model='sonnet')['review']
+        during = json.loads(text.split('during: ', 1)[1].splitlines()[0])
+        self.assertEqual((during['claude']['model'], during['codex']), ('sonnet', None))
+        self.assertEqual({a['id']: a['reviewing'] for a in status.project_status(self.project)['agents']},
+                         {'claude': None, 'codex': None})
+        after = {f.name: f.read_bytes() for f in mem.iterdir() if f.is_file() and f.name not in ('reviews.json', '.reviews.lock')}
+        self.assertEqual(after, before)  # No checkpoint, activity or history from a review.
+        # A review that died (its process gone, or far too old) or a damaged entry does not show, and never breaks
+        # the status; the next review's bookkeeping drops them, keeping the live ones.
+        ended = subprocess.Popen([sys.executable, '-c', 'pass'])
+        ended.wait()
+        self.assertTrue(project.process_alive(os.getpid()))
+        self.assertFalse(project.process_alive(ended.pid))
+        now = project.now_iso()
+        project.write_json(mem / 'reviews.json', {
+            'gone': {'agent': 'codex', 'started': now, 'pid': ended.pid},
+            'old': {'agent': 'claude', 'started': '2020-01-01T00:00:00+00:00', 'pid': os.getpid()},
+            'naive': {'agent': 'claude', 'started': now[:-6], 'pid': os.getpid()},  # No zone: read as UTC.
+            'huge': {'agent': 'claude', 'started': now, 'pid': 10 ** 30},
+            'flag': {'agent': 'claude', 'started': now, 'pid': True},
+            'text': 'damaged',
+            'live': {'agent': 'codex', 'model': 'm', 'effort': '', 'started': now, 'pid': os.getpid()}})
+        expected = {'codex': {'model': 'm', 'effort': '', 'started': now},
+                    'claude': {'model': None, 'effort': None, 'started': now[:-6]}}
+        self.assertEqual(project.running_reviews(mem), expected)
+        self.assertEqual({a['id']: a['reviewing'] for a in status.project_status(self.project)['agents']}, expected)
+        project.end_review(self.project, 'not-there')
+        self.assertEqual(set(read_json(mem / 'reviews.json')), {'live', 'naive'})
+
+    def test_review_bookkeeping_never_stops_a_review(self):
+        (self.project / 'NEW.md').write_text('x\n')
+        mem = self.project / '.agent-memory'
+
+        def busy(*_):
+            raise TimeoutError('locked')
+
+        with mock.patch.object(project, 'file_lock', busy):
+            self.assertIn('claude args', review.review(self.project, 'claude', 'goal')['review'])
+        if not WINDOWS:  # A symlink planted as reviews.json: its target is never written.
+            target = Path(self.tmp.name) / 'target.txt'
+            target.write_text('keep me')
+            (mem / 'reviews.json').unlink(missing_ok=True)
+            (mem / 'reviews.json').symlink_to(target)
+            review.review(self.project, 'claude', 'goal')
+            self.assertEqual(target.read_text(), 'keep me')
+            self.assertEqual(project.running_reviews(mem), {})
+        self.assertIs(signal.getsignal(signal.SIGINT), signal.default_int_handler)  # Restored.
+
     def test_reviews_uncommitted_changes_including_new_files(self):
         (self.project / 'NEW.md').write_text('brand new line\n')
         result = review.review(self.project, 'codex', 'add a note')
@@ -776,6 +1346,9 @@ class ReviewTest(unittest.TestCase):
         claude = review.review(self.project, 'claude')['review']
         # Read-only by construction, and flagged so the reviewer's own hooks stay out of shared memory.
         self.assertIn('--tools Read,Grep,Glob', claude)
+        self.assertRegex(claude, r'--session-id [0-9a-f-]{36}')  # Recorded, so it never sets the last used model.
+        with mock.patch.object(models, 'add_review_session', side_effect=PermissionError('read-only cache')):
+            self.assertIn('--tools Read,Grep,Glob', review.review(self.project, 'claude')['review'])  # Still runs.
         self.assertIn('--sandbox read-only', result['review'])
         self.assertIn('env: 1', claude)
         self.assertIn('env: 1', result['review'])
@@ -887,6 +1460,23 @@ class ReviewTest(unittest.TestCase):
         subprocess.run(g + ['merge', '-q', '--no-ff', '-m', 'merge side', 'side'], cwd=self.project, check=True)
         diff, what, notes = review.collect_diff(self.project, commit='HEAD')
         self.assertIn('from the side branch', diff)
+        # --base: a branch's commits since it left the base, as a pull request shows them; not the base's own.
+        subprocess.run(g + ['checkout', '-q', '-b', 'feature'], cwd=self.project, check=True)
+        (self.project / 'feature.txt').write_text('feature work\n')
+        subprocess.run(['git', 'add', 'feature.txt'], cwd=self.project, check=True)
+        subprocess.run(g + ['commit', '-q', '-m', 'feature'], cwd=self.project, check=True)
+        (self.project / 'feature.txt').write_text('not committed\n')
+        diff, what, notes = review.collect_diff(self.project, base='side')
+        self.assertIn('feature work', diff)
+        self.assertNotIn('from the side branch', diff)  # Merged before the branch left it.
+        self.assertIn('the commits since side', what)
+        self.assertIn('Uncommitted changes are not part of this review', notes)
+        for bad in ('no-such-branch', '--output=x'):
+            with self.assertRaises(review.ReviewError):
+                review.collect_diff(self.project, base=bad)
+        with self.assertRaises(review.ReviewError):
+            review.review(self.project, 'codex', commit='HEAD', base='side')
+        subprocess.run(['git', 'checkout', '-q', 'feature.txt'], cwd=self.project, check=True)
         # Many new files: one git call each is capped, the rest is named.
         crowd = Path(self.tmp.name) / 'crowd'
         crowd.mkdir()
@@ -1292,8 +1882,52 @@ class CliInstallTest(unittest.TestCase):
         (target / '.install.lock').unlink()
         self.run_node(call)
         self.assertEqual(sorted(os.listdir(target / 'versions')), ['0.3.1', '0.3.2'])  # Older ones are dropped.
+        # Same version, other files (a test build): the build hash in BUILD names a new folder and switches to it.
+        (target / '.install.lock').unlink(missing_ok=True)
+        self.bundle(bundled, '0.3.2')
+        (bundled / 'BUILD').write_text('abc123def456\n')
+        self.assertTrue(json.loads(self.run_node(call))['updated'])
+        self.assertEqual(current(), '0.3.2-abc123def456')
+        self.assertFalse(json.loads(self.run_node(call))['updated'])
+        (bundled / 'BUILD').write_text('0123456789ab\n')
+        self.assertTrue(json.loads(self.run_node(call))['updated'])
+        self.assertEqual(sorted(os.listdir(target / 'versions')), ['0.3.2-0123456789ab', '0.3.2-abc123def456'])
+        status = subprocess.run([sys.executable, str(target / 'bin' / 'baton'), 'status', str(tmp.name)],
+                                capture_output=True, text=True, env=env)
+        self.assertEqual(status.returncode, 0, status.stderr)
         # No bundle (a development copy of the extension): nothing to install.
         self.assertEqual(self.run_node(f'console.log(JSON.stringify(installCli("/nonexistent", {json.dumps(str(target))})))'), 'null')
+
+    @unittest.skipIf(WINDOWS or not shutil.which('sh'), 'bundle-cli.sh is a POSIX shell script')
+    def test_bundle_build_hash_follows_the_files(self):
+        # A copy of the repo layout bundle-cli.sh expects, so the real vscode-extension/cli is never touched.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        repo = Path(tmp.name) / 'repo'
+        (repo / 'scripts').mkdir(parents=True)
+        shutil.copy(ROOT / 'scripts' / 'bundle-cli.sh', repo / 'scripts')
+        (repo / 'baton' / '__pycache__').mkdir(parents=True)
+        (repo / 'baton' / 'cli.py').write_text('print(1)\n')
+        (repo / 'bin').mkdir()
+        (repo / 'bin' / 'baton').write_text('launcher\n')
+        (repo / 'vscode-extension').mkdir()
+        (repo / 'vscode-extension' / 'package.json').write_text('{"version": "0.9.0"}')
+
+        def build():
+            run = subprocess.run(['sh', str(repo / 'scripts' / 'bundle-cli.sh')], capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            return (repo / 'vscode-extension' / 'cli' / 'BUILD').read_text().strip()
+
+        first = build()
+        self.assertRegex(first, r'^[0-9a-f]{12}$')
+        (repo / 'baton' / '__pycache__' / 'cli.pyc').write_bytes(b'cache')
+        self.assertEqual(build(), first)  # Same files (caches are left out): same hash.
+        self.assertFalse(list((repo / 'vscode-extension' / 'cli').rglob('__pycache__')))
+        (repo / 'baton' / 'cli.py').write_text('print(2)\n')
+        changed = build()
+        self.assertNotEqual(changed, first)  # Same version, other code: another hash, so the extension reinstalls.
+        (repo / 'baton' / 'new.py').write_text('')
+        self.assertNotIn(build(), (first, changed))
 
     @unittest.skipIf(WINDOWS, 'installs from before current-version used a symlink, which Windows did not support anyway')
     def test_upgrades_a_symlink_install(self):

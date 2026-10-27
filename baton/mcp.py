@@ -54,7 +54,8 @@ TOOLS = [
                     'returns only what is new.',
      'inputSchema': {'type': 'object', 'properties': {
          'project_path': PROJECT_PATH,
-         'session_id': {'type': 'string', 'description': 'From an earlier baton_context call in this conversation.'}},
+         'session_id': {'type': 'string', 'description': 'From an earlier baton_context call in this conversation, '
+                                                         'or the one your AI Baton context from a hook gave you.'}},
          'required': ['project_path']}},
     {'name': 'baton_checkpoint',
      'description': 'Call this before you end any turn in which you changed files or decided something, without '
@@ -62,7 +63,8 @@ TOOLS = [
                     'conversation can continue from it.',
      'inputSchema': {'type': 'object', 'properties': {
          'project_path': PROJECT_PATH,
-         'session_id': {'type': 'string', 'description': 'The session_id baton_context returned.'},
+         'session_id': {'type': 'string', 'description': 'The session_id baton_context (or your AI Baton context '
+                                                         'from a hook) gave you.'},
          'summary': {'type': 'string', 'description': 'In English: what was done, how it was verified, what is left, '
                                                       'the next step. A few sentences. No secrets.'}},
          'required': ['project_path', 'session_id', 'summary']}},
@@ -156,6 +158,12 @@ class Server:
         context = hook.build_context(mem, root, self.agent, event, sid)
         if event == 'SessionStart':
             context = f'Project: {root}\n' + context
+        if hook.hook_ran(mem, self.agent, sid):
+            # The session_id came from its own hook, which ran in this conversation and saves its turns
+            # (hook.run_copilot): asking for baton_checkpoint too would save each twice. Installed is not enough: a chat
+            # opened before, or a harness that does not run them, still needs the tool.
+            return (context or 'Nothing new since your last call.') + \
+                f'\n\nsession_id: {sid} (pass it to baton_context to get only what is new). ' + hook.SAVED_BY_HOOK.strip()
         return (context or 'Nothing new since your last call.') + \
             f'\n\nsession_id: {sid} (pass it to baton_checkpoint, and to baton_context to get only what is new). ' \
             'Before you end a turn in which you changed files or decided something, call baton_checkpoint with it, ' \

@@ -619,3 +619,84 @@ Reply: "Utworzyłem parser.py z funkcją parse_csv(text), która dzieli tekst na
 - The `~/baton-test-mcp` window closed (no ghost window this time; only the ai-baton window remains) and the folder deleted. Copilot's chat history for that workspace stays in VS Code's storage.
 - The ai-baton window was not touched.
 - The only file in this repo edited by the tester is this report. Nothing committed.
+
+# Round 10: Copilot card with native hooks (2026-10-28)
+
+Tester: Claude desktop (computer use: background clicks in VS Code, plus full-screen control for the hover tooltips; the user typed the one Copilot message). Extension `wwijatkowski.ai-baton` 0.5.1 from `~/ai-baton/ai-baton-0.5.1.vsix`; `~/.ai-baton/current-version` = `0.5.1-d1555a636384`. Project: `~/baton-test-card` (new, no git, initialized from the panel; the folder opened in Restricted Mode and the tester trusted it). Terminal commands ran through Claude's shell, not Terminal.app. Screenshots: `~/Pictures/ai-baton-round10/`.
+
+## Summary
+
+| # | Check | Result |
+|---|-------|--------|
+| P0 | 0.5.1 installed, CLI `0.5.1-d1555a636384` | PASS (installed with the `code` CLI, see details) |
+| P1 | No `~/.copilot/hooks/` before the test; Initialize Project dialogs | PASS |
+| P2 | Add agent → Copilot, notification | PASS |
+| P3 | Card before install: text, Install hooks + Connect memory, tooltip | PASS |
+| A1 | Install consent mentions Copilot in a terminal and `~/.copilot/hooks/ai-baton.json` | PASS |
+| A2 | Notification after install | PASS |
+| A3 | Card "Memory hooks on…" with "Connect memory tools", tooltip | PASS |
+| B2 | New chat on the card opens a Copilot CLI chat, no clipboard message | PASS |
+| B2 | Copilot answers BLUE-OTTER-7 from the hook context | PASS |
+| B3 | Card checkpoint and Recent work after Refresh | PASS |
+| C1 | Connect memory tools: notification and "Memory hooks and tools on…" with Disconnect | PASS |
+| C2 | Hooks removed in the terminal: "Memory tools are on. Install hooks…" with Install hooks | PASS (INFO: two texts, see observations) |
+| C3 | Disconnect: back to the P3 state | PASS |
+| D1 | Install hooks again | PASS |
+| D2 | Remove dialog says the hooks stay and how to remove them | PASS |
+| D3 | `ai-baton.json` stays after Remove, goes with `uninstall-hooks` | PASS |
+
+## Details
+
+**P0 PASS.** VS Code was click-only for the tester, and Install from VSIX needs a typed path. The tester instead ran `code --install-extension ~/ai-baton/ai-baton-0.5.1.vsix --force` ("Extension 'ai-baton-0.5.1.vsix' was successfully installed."; the list shows `wwijatkowski.ai-baton@0.5.1`). The test window was then opened fresh with `code -n ~/baton-test-card`, so no Reload Window was needed. The ai-baton window was not touched. After the panel activated, `cat ~/.ai-baton/current-version` showed `0.5.1-d1555a636384` (`versions/`: 0.4.1, 0.5.0, 0.5.1-d1555a636384).
+
+**P1 PASS.** `ls ~/.copilot/hooks/`: the directory did not exist, so there was no `ai-baton.json`. Panel: "This folder is not connected yet. Initializing adds AGENTS.md, CLAUDE.md, docs/ and memory hooks. Existing files stay unchanged." with **Initialize project**. Dialog (`round10-P1-init-dialog.png`): "Set up baton-test-card for AI Baton? This adds AGENTS.md, CLAUDE.md, docs/ and memory hooks. Existing files are not overwritten." with Cancel / **Initialize**. Then a progress toast "Setting up baton-test-card…", Output "Done. Restart agent sessions in this folder.", and the toast "Project ready. Start a new Claude conversation. In Codex, approve the 3 hooks once: hooks button next to the model picker, then Allow all." (`round10-P1-project-ready.png`; the full text is from `extension.js`).
+
+**P2 PASS.** The picker listed "Copilot GitHub.copilot-chat" first. Notification: "Copilot added. For shared memory, use Install hooks on its card (Connect memory adds the memory tools)." (the toast shows its start, the rest is from `extension.js`). There was no Disconnect on the card. For about a second the card showed only "Copilot · No checkpoint" before the hook-status box appeared.
+
+**P3 PASS** (`round10-P3-card-no-hooks.png`). "Memory hooks are not installed, so this agent does not share memory." with **Install hooks** and **Connect memory**. Tooltip on Install hooks (`round10-P3-install-hooks-tooltip.png`): "Hooks in your Copilot settings, for every project (also Copilot in a terminal)". It shows only while the VS Code window has focus.
+
+**A1 PASS** (`round10-A1-install-consent.png`). Modal: "Install AI Baton memory hooks for Copilot once, for all projects? They go into your user settings and do nothing in folders that are not set up for AI Baton. Copilot's also run for Copilot in a terminal (~/.copilot/hooks/ai-baton.json)." with Cancel / **Install**. After Install, `~/.copilot/hooks/ai-baton.json` had SessionStart, UserPromptSubmit and Stop, each `python3 ".../.ai-baton/bin/baton" hook copilot --global` with `timeoutSec` 10.
+
+**A2 PASS** (`round10-A2-installed-toast-and-card.png`). "Copilot hooks installed. Copilot CLI chats get the shared context from their next message, open ones too, and their turns are saved by themselves. Local chats run no hooks." (the toast is cut off; the full text is from `extension.js`). Output: "Done."
+
+**A3 PASS** (`round10-A3-card-hooks-on-tooltip.png`). Card: "Memory hooks on, in Copilot CLI chats (Local chats get none)." with the link **Connect memory tools**. Its tooltip: "Also give it AI Baton's memory tools (an MCP server run by this extension), e.g. to search older checkpoints".
+
+**B1.** Seed: `echo '{…"session_id":"seed-1"…"Codex chose the codename BLUE-OTTER-7 for this project."}' | python3 ~/.ai-baton/bin/baton hook codex` printed `{}`. The Codex card showed "Checkpoint just now · Codex chose the codename BLUE-OTTER-7 for this project.".
+
+**B2 PASS** (`round10-B2-new-chat-copilot-cli.png`, `round10-B2-answer.png`). New chat on the card opened a new, empty chat. The session type below the input was **Copilot CLI** (with "Default permissions"), the placeholder was "Run tasks in the background with the …", and no clipboard message appeared. The user sent "Jaki kryptonim ma ten projekt? Nie czytaj plików ani nie uruchamiaj narzędzi." The chat header became "Copilot CLI · Jaki kryptonim ma ten pr…". Reply: "Kryptonim projektu to BLUE-OTTER-7. / To było podane w lokalnym, historycznym checkpointcie innego agenta (Codex)." No tool calls were shown.
+
+**B3 PASS** (`round10-B3-card-checkpoint.png`, `round10-B3-recent-work.png`). The card already updated before Refresh. After Refresh it showed "Copilot · last · Checkpoint just now · Kryptonim projektu to BLUE-OTTER-7. To było podane w lokalnym, historycznym checkpointcie innego agenta (Codex)." Recent work (2): "Copilot · just now · Kryptonim projektu to BLUE-OTTER-7. To było po…" above Codex. Status bar: "Copilot just now". `copilot.json`:
+- `client`: "copilot-agent"
+- `session_id`: "98a58d65-13b0-4fb7-840a-72cf52b72f5e" (native)
+- `message_id` set
+- `changes`: shadow, 0 changed
+
+**C1 PASS** (`round10-C1-tools-and-hooks-on.png`). Notification "Copilot can now use AI Baton's memory tools in agent mode, in every workspace. It decides when to call them: the instructions ask it to load the shared context when a chat starts and to save a checkpoint after its work. If a chat skips them, ask it to call baton_context or baton_checkpoint." Card: "Memory hooks and tools on. The hooks run in Copilot CLI chats, not in Local ones." with **Disconnect** (tooltip "Stop offering AI Baton's MCP server to this agent").
+
+**C2 PASS** (`round10-C2-tools-only.png`). `baton uninstall-hooks --agents=copilot` printed "- /Users/wiktorwijatkowski/.copilot/hooks/ai-baton.json: removed". After Refresh the card showed:
+- a box "Memory tools are on. Install hooks so it also gets the shared context at the start and its turns are saved by themselves." with **Install hooks**;
+- below it "Memory tools on: it decides when to call them (agent mode)." with **Disconnect**.
+
+**C3 PASS** (`round10-C3-disconnected.png`). Disconnect brought back the P3 state: "Memory hooks are not installed, so this agent does not share memory." with Install hooks and Connect memory. The checkpoint summary stayed on the card.
+
+**D1 PASS.** Install hooks → the same consent → Install → the same notification. The card showed "Memory hooks on, in Copilot CLI chats (Local chats get none)."
+
+**D2 PASS** (`round10-D2-remove-dialog.png`, `round10-D2-after-remove.png`). "Remove Copilot from AI Baton? The extension stays installed. Its memory hooks stay active; to remove them run: baton uninstall-hooks --agents=copilot." with Cancel / **Remove**. After Remove the Copilot card was gone, Recent work listed "copilot" in lower case, and Remove's tooltip read "Remove from AI Baton; the extension stays installed".
+
+**D3 PASS.** `ls ~/.copilot/hooks/` → `ai-baton.json`; `baton uninstall-hooks --agents=copilot` → "…/ai-baton.json: removed"; `ls` again → empty.
+
+## Other observations (round 10)
+
+1. C2 shows two texts that say almost the same thing: the box "Memory tools are on. Install hooks…" and, below it, "Memory tools on: it decides when to call them (agent mode)." with Disconnect. One sentence would do.
+2. After a click, a webview tooltip can stay on screen ("Hooks in your Copilot settings…" after Install, and "Remove from AI Baton…" after Remove) until the mouse moves. This is VS Code behaviour, cosmetic.
+3. After Remove, Recent work again shows the lower-case id "copilot" (as in rounds 8–9).
+4. Copilot CLI saved the turn with `client` "copilot-agent" and its native session id. That is clearer than "copilot-cli" from the MCP path in rounds 8–9.
+
+## State left behind (round 10)
+
+- Extension 0.5.1 (`ai-baton-0.5.1.vsix`) stays installed; `~/.ai-baton` holds `versions/0.5.1-d1555a636384` (current) next to 0.4.1 and 0.5.0.
+- `~/.copilot/hooks/ai-baton.json` removed (D3). The empty directory `~/.copilot/hooks/` (created by the install) was removed too, so it is gone again, as before the test.
+- Copilot is removed from AI Baton's agents (`~/.config/ai-baton/agents.json` is `{"agents": [], "hidden": []}`). Memory tools are disconnected (C3). No `aiBaton.memoryTools` entry in the user settings.
+- The `~/baton-test-card` window is closed and the folder deleted after this report. Copilot's chat history for that workspace stays in VS Code's storage.
+- Screenshots (16) stay in `~/Pictures/ai-baton-round10/`.
+- The ai-baton window was not touched. The only repo file the tester edited is this report. Nothing committed.

@@ -8,11 +8,15 @@ import json
 import re
 from pathlib import Path
 
-from .project import load_agents, read_json, write_json, write_text
+from .project import file_lock, load_agents, read_json, write_json, write_text
 
 CLAUDE_SETTINGS = Path.home() / '.claude' / 'settings.json'
 CLAUDE_STATE = Path.home() / '.claude.json'
 CLAUDE_PROJECTS = Path.home() / '.claude' / 'projects'
+# Session ids of `baton review` runs by Claude: their transcripts stay (usage counts their tokens) but are not the
+# user's own conversations, so they never set the last used model.
+REVIEW_SESSIONS = Path.home() / '.cache' / 'ai-baton' / 'review-sessions.json'
+MAX_REVIEW_SESSIONS = 200
 CLAUDE_MODELS = [('opus', 'Opus'), ('sonnet', 'Sonnet'), ('haiku', 'Haiku')]
 CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh']
 CODEX_CONFIG = Path.home() / '.codex' / 'config.toml'
@@ -41,8 +45,10 @@ def model_name(model_id):
 
 def claude_last_model():
     """Model of the latest Claude reply on this machine; Claude's default depends on the plan and is not stored."""
+    reviews = set(review_sessions())
     try:
-        logs = sorted(CLAUDE_PROJECTS.glob('*/*.jsonl'), key=lambda p: p.stat().st_mtime, reverse=True)[:3]
+        logs = sorted((p for p in CLAUDE_PROJECTS.glob('*/*.jsonl') if p.stem not in reviews),
+                      key=lambda p: p.stat().st_mtime, reverse=True)[:3]
     except OSError:
         return ''
     for log in logs:
@@ -54,6 +60,18 @@ def claude_last_model():
             if match:
                 return model_name(match[1])
     return ''
+
+
+def review_sessions():
+    found = read_json(REVIEW_SESSIONS, []) if REVIEW_SESSIONS.exists() else []
+    return [s for s in found if isinstance(s, str)] if isinstance(found, list) else []
+
+
+def add_review_session(session_id):
+    # Locked: two reviews starting together would otherwise drop one id.
+    REVIEW_SESSIONS.parent.mkdir(parents=True, exist_ok=True)
+    with file_lock(REVIEW_SESSIONS.with_name(REVIEW_SESSIONS.name + '.lock')):
+        write_json(REVIEW_SESSIONS, (review_sessions() + [session_id])[-MAX_REVIEW_SESSIONS:], private=True)
 
 
 def load_claude_settings():

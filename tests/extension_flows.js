@@ -349,6 +349,39 @@ const withCopilot = (h) => {
   h.cli.status = () => sampleStatus({ agents: [...sampleStatus().agents, COPILOT] });
 };
 
+test('Copilot hooks: installed from its card after a consent naming the terminal; then no context request is copied', async (h) => {
+  h.installed.add('GitHub.copilot-chat');
+  const copilot = { ...COPILOT, hooks: 'copilot' };
+  h.cli.status = () => sampleStatus({ agents: [...sampleStatus().agents, copilot] });
+  let hooks = 'missing';
+  h.cli['hook-status'] = () => ({ copilot: { state: hooks } });
+  h.cli['install-hooks'] = () => { hooks = 'ok'; return '~ ai-baton.json'; };
+  await h.start();
+  await h.panel({ cmd: 'open', agent: 'copilot' });
+  assert.match(h.clipboard, /AGENTS\.md/, 'hooks not installed yet: the context request is copied');
+  h.clipboard = '';
+  h.on('info', /^Install AI Baton memory hooks for Copilot once/, 'Install');
+  await h.panel({ cmd: 'installHooks', agent: 'copilot' });
+  await h.settle();
+  assert.ok(h.dialogs.some((d) => /also run for Copilot in a terminal/.test(d.text)));
+  assert.deepStrictEqual(h.cliArgs('install-hooks'), [['install-hooks', '--agents=copilot']]);
+  assert.ok(h.dialogs.some((d) => /^Copilot hooks installed/.test(d.text)));
+  await h.panel({ cmd: 'open', agent: 'copilot' });
+  assert.strictEqual(h.clipboard, '', 'its hooks deliver the context');
+  // New chat: a Copilot CLI chat, the only kind that runs the hooks (the plain new chat is a Local one).
+  h.executed.length = 0;
+  await h.panel({ cmd: 'new', agent: 'copilot' });
+  assert.deepStrictEqual(h.executed, [['workbench.action.chat.openNewChatSessionInPlace.copilotcli', 'sidebar']]);
+  assert.strictEqual(h.clipboard, '');
+  // A VS Code without Copilot CLI chats: a Local one, and the context request is copied.
+  h.failing.add('workbench.action.chat.openNewChatSessionInPlace.copilotcli');
+  h.executed.length = 0;
+  await h.panel({ cmd: 'new', agent: 'copilot' });
+  await h.settle();
+  assert.deepStrictEqual(h.executed.map((c) => c[0]), ['workbench.action.chat.openNewChatSessionInPlace.copilotcli', 'workbench.action.chat.open']);
+  assert.match(h.clipboard, /AGENTS\.md/);
+});
+
 test('Connect memory offers AI Baton\'s MCP server to Copilot; Disconnect withdraws it', async (h) => {
   withCopilot(h);
   await h.start();
@@ -556,6 +589,24 @@ test('Ask for review with another model and effort, offered again next time', as
   h.on('input', /\(3\/3\)/, '');
   await h.commands['aiBaton.askForReview']();
   assert.deepStrictEqual(h.cliArgs('review')[1].slice(6, 10), ['--model', 'sonnet', '--effort', 'low']);
+});
+
+test('Ask for review with a model id typed by hand', async (h) => {
+  h.cli.models = () => ({ claude: { model: '', effort: '', efforts: ['low', 'high'], defaultLabel: 'set by your plan',
+    options: [{ value: 'opus', label: 'Opus' }] } });
+  let check;
+  h.on('pick', /\(1\/3\)/, pickSession('claude-s1'));
+  h.on('pick', /\(2\/3\)/, (items) => items.find((i) => i.choose && i.agent.id === 'claude'));
+  h.on('pick', /Claude reviews with which model/, (items) => items[items.length - 1]);
+  h.on('input', /Claude reviews with which model/, (options) => { check = options.validateInput; return ' claude-opus-4-1 '; });
+  h.on('pick', /Claude · claude-opus-4-1 reviews with which effort/, (items) => items[0]);
+  h.on('input', /\(3\/3\)/, '');
+  await h.start();
+  await h.commands['aiBaton.askForReview']();
+  assert.strictEqual(check('--help'), 'Letters, digits and . : [ ] - _ only (not starting with -), up to 80 characters.');
+  assert.strictEqual(check('a b'), 'Letters, digits and . : [ ] - _ only (not starting with -), up to 80 characters.');
+  assert.strictEqual(check('opus[1m]'), null);
+  assert.deepStrictEqual(h.cliArgs('review')[0].slice(6, 8), ['--model', 'claude-opus-4-1']);
 });
 
 test('a review choice is remembered only once the review has run', async (h) => {

@@ -2,7 +2,7 @@
 
 **A conductor for your AI coding agents.** Claude Code and Codex take turns on one project without losing context, and one agent can review the other's work.
 
-> Preview. Works with the Claude Code and Codex extensions, on macOS, Linux and Windows (Windows is new: tested automatically, less used so far). Get it from the VS Code Marketplace, or from Open VSX in Cursor, Windsurf and VSCodium.
+> Preview. Works with the Claude Code and Codex extensions and with GitHub Copilot (Copilot CLI chats), on macOS, Linux and Windows (Windows is new: tested automatically, less used so far). Get it from the VS Code Marketplace, or from Open VSX in Cursor, Windsurf and VSCodium.
 
 ![Claude adds a function; a new Codex chat already knows what changed and why; then Codex reviews Claude's work and the review can go back to Claude's conversation](media/screenshots/demo.gif)
 
@@ -46,13 +46,22 @@ Then start a new chat in either agent.
 - Python 3.9 or newer as `python3` on macOS and Linux (on macOS: `xcode-select --install`); on Windows Python 3.11 or newer from python.org (the `py` launcher or `python`). Or set `aiBaton.python`.
 - The Claude Code and/or Codex VS Code extension, signed in.
 - For **Ask for review**: a git repository or a project set up with AI Baton (without git, the changes come from AI Baton's local snapshots), and the reviewing agent's command-line tool works with your account. A review uses that agent's plan.
-- Other agents (Copilot, Cline, Continue, Gemini, ...) can be added to the panel. To share memory they need AI Baton's MCP server (see Agents without hooks); otherwise, when you open one, AI Baton copies a request to load the shared context, which you paste into its chat.
+- GitHub Copilot (built into VS Code) shares memory through its own hooks; see GitHub Copilot below.
+- Other agents (Cline, Continue, Gemini, ...) can be added to the panel. To share memory they need AI Baton's MCP server (see Agents without hooks); otherwise, when you open one, AI Baton copies a request to load the shared context, which you paste into its chat.
+
+## GitHub Copilot
+
+Add Copilot with **Add agent**, then click **Install hooks** on its card. AI Baton writes its own hook file, `~/.copilot/hooks/ai-baton.json` (or under `COPILOT_HOME`), so Copilot gets the shared context with each message and its final answer is saved as its checkpoint, the way Claude Code and Codex hooks work. No tool calls are needed.
+
+The hooks run only in **Copilot CLI** chats, the agent runtime you pick in the chat's session type; **New chat** on the card opens one. A **Local** chat runs no hooks and gets no memory from them; use a Copilot CLI chat, or connect the memory tools (below). A turn with megabytes of tool output may not be saved; the previous checkpoint then stays. Chats that are already open pick the hooks up from their next message. The same hook file also applies to the Copilot CLI in a terminal.
+
+**Connect memory tools** on the card adds AI Baton's MCP tools as well, e.g. to search older checkpoints. In a chat whose hooks ran, the tools do not ask Copilot to save checkpoints itself, so no turn is saved twice.
 
 ## Agents without hooks (MCP)
 
 Claude Code and Codex share memory through hooks. Other agents that speak MCP (the Model Context Protocol) can use AI Baton's local MCP server: `baton mcp --agent <id>`, started by the agent, over stdio, with no network. It gives the agent three tools: `baton_context` (what the hooks give Claude and Codex at the start of a chat), `baton_checkpoint` (save a summary of the work) and `baton_recall` (search older checkpoints). Its checkpoints show up in Recent work and reach the other agents.
 
-For GitHub Copilot, click **Connect memory** on its card: AI Baton offers the server to VS Code itself (no settings file is edited; it works in every workspace and profile, and always runs the current CLI). **Disconnect** turns it off. This needs a VS Code with the MCP provider API; otherwise, and for other agents, add the server to the agent's MCP settings with absolute paths, for example (macOS and Linux; the extension installs the CLI in `~/.ai-baton`):
+For GitHub Copilot without hooks (e.g. in Local chats), click **Connect memory** on its card: AI Baton offers the server to VS Code itself (no settings file is edited; it works in every workspace and profile, and always runs the current CLI). **Disconnect** turns it off. This needs a VS Code with the MCP provider API; otherwise, and for other agents, add the server to the agent's MCP settings with absolute paths, for example (macOS and Linux; the extension installs the CLI in `~/.ai-baton`):
 
 ```json
 { "command": "python3", "args": ["/Users/you/.ai-baton/bin/baton", "mcp", "--agent", "copilot"] }
@@ -76,13 +85,14 @@ The memory hooks run locally: they never use the network or call a model. AI Bat
 
 ### After you agree in the panel
 
-- Memory hooks in `~/.claude/settings.json` and `~/.codex/hooks.json`. They run `~/.ai-baton/bin/baton` and do nothing outside projects set up for AI Baton.
+- Memory hooks in `~/.claude/settings.json`, `~/.codex/hooks.json` and, for Copilot, `~/.copilot/hooks/ai-baton.json`. They run `~/.ai-baton/bin/baton` and do nothing outside projects set up for AI Baton.
 - Model and effort for new conversations: Claude in `~/.claude/settings.json`, Codex in `~/.codex/config.toml`.
 - Agents you add or hide: `~/.config/ai-baton/agents.json`.
 
 ### Read only
 
 - Claude Code and Codex logs and transcripts, for token usage, session information and which program a conversation runs in: `~/.claude/projects/`, `~/.codex/sessions/`.
+- Copilot's session log of the chat whose turn just ended (`~/.copilot/session-state/<chat>/events.jsonl`), for its final answer, only when the Copilot hooks are installed.
 - Plan limits and models: `~/.claude.json`, `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.codex/models_cache.json`.
 
 ### Network
@@ -100,11 +110,11 @@ python3 ~/.ai-baton/bin/baton uninstall-hooks
 
 Add `--project <folder>` to also remove hooks from a project's own files. Then delete `~/.ai-baton`, `~/.cache/ai-baton` and `~/.config/ai-baton`. In each project you can delete `.agent-memory/` and `.baton.json`, and remove the `.agent-memory/` line from `.gitignore`. `AGENTS.md`, `CLAUDE.md` and `docs/` may hold your own work: remove only the part between `<!-- BEGIN AI-BATON -->` and `<!-- END AI-BATON -->` and the `@AGENTS.md` lines AI Baton added, and delete these files only if AI Baton created them and you no longer need them.
 
-**Remove** on an agent's card only hides the agent in the panel; its hooks stay and its checkpoints still reach other agents.
+`uninstall-hooks` also removes the Copilot hook file. **Remove** on an agent's card only hides the agent in the panel; its hooks stay and its checkpoints still reach other agents.
 
 ## Good to know
 
-AI Baton relies on details of Claude Code and Codex that are not public APIs: log and transcript formats, the cached plan usage, the links that reopen a conversation, and how Codex reports hook approval. An update to either agent can break a feature until AI Baton catches up. The rest keeps working.
+AI Baton relies on details of Claude Code, Codex and Copilot that are not public APIs: log and transcript formats (for Copilot, the session log its Stop hook reads), the cached plan usage, the links that reopen a conversation, and how Codex reports hook approval. An update to one of them can break a feature until AI Baton catches up. The rest keeps working.
 
 ## Commands
 

@@ -9,7 +9,7 @@ AI Baton lets several coding agents (Claude Code, Codex, more later) take turns 
 - Agent registry: `baton/agents.json`, plus per-user extras in `~/.config/ai-baton/agents.json`.
 
 Run and test:
-- Tests: `python3 -m unittest discover -s tests` (includes `tests/webview_smoke.js`, which renders the webviews in a fake DOM; extend it when you change `media/*.js`). Real agent CLIs running the hooks, no login or tokens: `python3 tests/e2e_hooks.py`; full turns with the real agents (uses plan tokens): `sh tests/e2e_agents.sh`. CI (`.github/workflows/test.yml`) runs all of it except e2e_agents.sh on Linux, Windows and macOS
+- Tests: `python3 -m unittest discover -s tests` (includes `tests/webview_smoke.js`, which renders the webviews in a fake DOM; extend it when you change `media/*.js`). Real agent CLIs running the hooks, no login or tokens: `python3 tests/e2e_hooks.py`; full turns with the real agents (uses plan tokens): `sh tests/e2e_agents.sh`. Real Copilot in a real VS Code (macOS, opt-in, up to 8 Copilot messages a round, its own profile and HOME in `~/.cache/ai-baton/live`): `node tests/live/run.js setup` once to sign in, then `node tests/live/run.js round`. CI (`.github/workflows/test.yml`) runs all of it except e2e_agents.sh on Linux, Windows and macOS
 - CLI: `python3 bin/baton status .`
 - Extension: package with `sh scripts/package.sh` (bundles the CLI and checks the .vsix), install the `.vsix`, then Developer: Reload Window. While developing, set `aiBaton.home` to this checkout so the panel runs it directly. VS Code caches activity bar icons by path, so rename the icon file when changing it.
 

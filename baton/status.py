@@ -4,7 +4,7 @@ from pathlib import Path
 
 import json
 
-from .project import MARKER, agent_activity, clip, find_root, is_working, load_agents, read_json
+from .project import MARKER, agent_activity, clip, find_root, is_working, load_agents, read_json, running_reviews
 from .recall import entries
 
 DOCS = {'handoff': 'docs/AGENT_HANDOFF.md', 'status': 'docs/STATUS.md',
@@ -60,6 +60,7 @@ def project_status(start):
     mem = root / '.agent-memory'
     recent = recent_work(mem)
     activity = read_json(mem / 'activity.json', {}) or {}
+    reviews = running_reviews(mem)
     agents = []
     for agent in load_agents(root):
         snap = read_json(mem / (agent['id'] + '.json')) or {}
@@ -67,6 +68,7 @@ def project_status(start):
                        # "working" only while is_working agrees (turn not ended in the transcript, not stale).
                        'activity': {**act, 'state': 'working' if is_working(act) else 'idle'}
                        if (act := agent_activity(activity.get(agent['id']))) else None,
+                       'reviewing': reviews.get(agent['id']),
                        'checkpoint': ({k: snap.get(k) for k in ('saved_at', 'branch', 'commit', 'session_id')}
                                       | {'summary': clip(snap.get('summary') or snap.get('last_reply') or '', 600)})
                        if snap else None})

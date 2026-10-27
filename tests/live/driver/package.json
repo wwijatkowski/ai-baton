@@ -1,0 +1,11 @@
+{
+  "name": "ai-baton-live-driver",
+  "displayName": "AI Baton live test driver",
+  "description": "Test only: runs chat and window commands for tests/live/run.js.",
+  "version": "0.0.1",
+  "publisher": "ai-baton-test",
+  "private": true,
+  "engines": { "vscode": "^1.90.0" },
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js"
+}

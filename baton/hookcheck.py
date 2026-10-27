@@ -111,8 +111,8 @@ def codex_trust(root):
 
 def user_status():
     """Which agents already have AI Baton hooks in user settings (no Codex query: install check only)."""
-    return {a['id']: {'state': 'ok' if has_baton_hooks(init_project.user_home(), a['hooks']) else 'missing'}
-            for a in load_agents() if a.get('hooks') in HOOK_FILES}
+    return {a['id']: {'state': 'ok' if init_project.has_user_hooks(a['hooks']) else 'missing'}
+            for a in load_agents() if a.get('hooks') in HOOK_FILES or a.get('hooks') == 'copilot'}
 
 
 def status(start):
@@ -122,6 +122,10 @@ def status(start):
     result = {}
     for agent in load_agents(root):
         kind = agent.get('hooks')
+        if kind == 'copilot':
+            result[agent['id']] = ({'state': 'ok', 'detail': 'installed (user)'} if init_project.has_user_hooks(kind)
+                                   else {'state': 'missing', 'detail': 'memory hooks are not installed'})
+            continue
         if kind not in HOOK_FILES:
             continue
         where = [name for name, base in (('project', root), ('user', init_project.user_home())) if has_baton_hooks(base, kind)]

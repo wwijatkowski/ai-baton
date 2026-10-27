@@ -29,7 +29,12 @@ USER_AGENTS = Path.home() / '.config' / 'ai-baton' / 'agents.json'
 AGENT_KEYS = ('id', 'label', 'extension', 'openCommand', 'newCommand')
 AGENT_ID_RE = re.compile(r'[a-z0-9][a-z0-9-]{0,39}')
 # Files in .agent-memory/ next to the checkpoints (<agent>.json): no agent may be called this.
-RESERVED_IDS = {'activity', 'seen'}
+RESERVED_IDS = {'activity', 'seen', 'reviews'}
+# Integrations a user-added agent gets from AI Baton itself, never from its own entry (add_agent keeps launch settings
+# only): keyed by the agent id and its extension, which must both match.
+INTEGRATIONS = {('copilot', 'github.copilot-chat'): {'hooks': 'copilot'}}
+
+WINDOWS = os.name == 'nt'
 
 
 class AgentError(Exception):
@@ -118,7 +123,14 @@ def load_agents(root=None, hidden=False):
     for source, more in (('user', registry['agents']), ('project', project or [])):
         known = {a['id'] for a in builtins + agents}
         agents += [{**a, 'source': source} for a in more if a.get('id') not in known]
-    return agents
+    return [with_integration(a) for a in agents]
+
+
+def with_integration(agent):
+    if agent.get('source') != 'user':
+        return agent
+    found = INTEGRATIONS.get((agent.get('id'), str(agent.get('extension') or '').lower()))
+    return {**agent, **found} if found else agent
 
 
 def user_registry():
@@ -313,12 +325,13 @@ def file_lock(path, timeout=3):
                 msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
 
 
-def write_json(path, data, private=False):
-    write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + '\n', private)
+def write_json(path, data, private=False, deadline=None):
+    write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + '\n', private, deadline)
 
 
-def write_text(path, text, private=False):
-    """Atomic write so a reader never sees half a file; an existing file keeps its mode and symlink."""
+def write_text(path, text, private=False, deadline=None):
+    """Atomic write so a reader never sees half a file; an existing file keeps its mode and symlink. Past `deadline`
+    (monotonic) a refused replace is not tried again."""
     path = Path(path)
     if path.is_symlink():
         path = path.resolve()
@@ -337,7 +350,7 @@ def write_text(path, text, private=False):
                 os.replace(temp, path)
                 break
             except PermissionError:
-                if os.name != 'nt' or attempt == 19:
+                if not WINDOWS or attempt == 19 or (deadline is not None and time.monotonic() >= deadline):
                     raise
                 time.sleep(0.05)
     finally:
@@ -350,3 +363,85 @@ def memory_dir(root):
     path.mkdir(mode=0o700, exist_ok=True)
     os.chmod(path, 0o700)
     return path
+
+
+# Reviews running now (`baton review`): .agent-memory/reviews.json, {token: {agent, model, effort, started, pid}}.
+# Only for the panel's "reviewing" badge: a review is not project work, so it never touches checkpoints or activity.
+REVIEWS = 'reviews.json'
+MAX_REVIEW_HOURS = 2  # An entry older than this is a review that died without cleaning up.
+
+
+def process_alive(pid):
+    """Whether process `pid` still runs; never signals it (os.kill(pid, 0) would end it on Windows)."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or not 0 < pid < 2 ** 31:
+        return False
+    if os.name == 'nt':
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return ctypes.GetLastError() == 5  # Access denied: it exists, owned by someone else.
+        try:
+            code = ctypes.c_ulong()
+            return bool(kernel.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259  # STILL_ACTIVE
+        finally:
+            kernel.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True  # EPERM: it exists, owned by someone else.
+    return True
+
+
+def review_entry(entry):
+    """(started, entry) for a review that is still running, else None. Damaged entries count as not running."""
+    if not isinstance(entry, dict) or not isinstance(entry.get('agent'), str):
+        return None
+    started = aware(entry.get('started'))
+    if started is None or datetime.now(timezone.utc) - started > timedelta(hours=MAX_REVIEW_HOURS):
+        return None
+    return (started, entry) if process_alive(entry.get('pid')) else None
+
+
+def update_reviews(root, change):
+    """Apply `change` to the running reviews under the lock, dropping finished or damaged ones. Best effort: the
+    badge is optional, so a failure here (permissions, a busy lock, a symlink planted as reviews.json) never stops
+    or spoils a review."""
+    try:
+        mem = memory_dir(root)
+        path = mem / REVIEWS
+        if path.is_symlink():
+            return
+        with file_lock(mem / '.reviews.lock'):
+            running = read_json(path, {}) or {}
+            running = {k: v for k, v in running.items() if review_entry(v)} if isinstance(running, dict) else {}
+            change(running)
+            write_json(path, running, private=True)
+    except (OSError, TimeoutError, ValueError):
+        pass
+
+
+def start_review(root, agent, model='', effort=''):
+    """Mark a review as running; returns the token for end_review."""
+    token = f'{os.getpid()}-{time.time_ns()}'
+    entry = {'agent': agent, 'model': model or '', 'effort': effort or '', 'started': now_iso(), 'pid': os.getpid()}
+    update_reviews(root, lambda running: running.__setitem__(token, entry))
+    return token
+
+
+def end_review(root, token):
+    update_reviews(root, lambda running: running.pop(token, None))
+
+
+def running_reviews(mem):
+    """{agent: the newest running review}: read only, for the panel."""
+    path = Path(mem) / REVIEWS
+    running = {} if path.is_symlink() else read_json(path, {}) or {}
+    found = {}
+    for value in (running.values() if isinstance(running, dict) else []):
+        live = review_entry(value)
+        if live and (value['agent'] not in found or live[0] > found[value['agent']][0]):
+            found[value['agent']] = live
+    return {agent: {k: entry.get(k) for k in ('model', 'effort', 'started')} for agent, (_, entry) in found.items()}

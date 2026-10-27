@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.1 (preview)
+
+- GitHub Copilot shares memory through its own hooks, like Claude Code and Codex: **Install hooks** on its card writes `~/.copilot/hooks/ai-baton.json`. Each message gets the shared context (newer checkpoints included), and each final answer is saved once as Copilot's checkpoint, without the agent having to call a tool (a turn with megabytes of tool output may be skipped; the previous checkpoint then stays). The hooks run only in **Copilot CLI** chats (Copilot's agent runtime); a **Local** chat runs none and gets no memory from them. **New chat** on the card opens a Copilot CLI chat. Chats already open pick the hooks up from their next message.
+- With the hooks installed, Connect memory tools is optional (e.g. to search older checkpoints), and `baton_context` no longer asks a chat whose hooks ran to call `baton_checkpoint`, so no turn is saved twice (once the hooks are removed, it asks again).
+- Tested with the real Copilot in a real VS Code (`tests/live/run.js`): context on every turn, after a reload and in a new chat, replies saved once, hooks with the memory tools, hooks removed and installed again with a chat open.
+- A purple "reviewing" badge on an agent's card while it reviews (`baton review`).
+- `baton review --base main` reviews a whole branch, as a pull request shows it (the panel shows the reviewing badge meanwhile, and the reviewer's hooks save nothing).
+- Ask for review: **Other model…** takes any model id. Claude's reviews no longer change the model shown as last used.
+- A test .vsix with the same version as the installed one now updates the CLI in `~/.ai-baton` (it is installed per build).
+
 ## 0.5.0 (preview)
 
 - Agents without hooks (Copilot, Cline, Continue, Gemini and other MCP clients) can share AI Baton's memory through its local MCP server, `baton mcp --agent <id>`: tools `baton_context`, `baton_checkpoint` and `baton_recall`. Their checkpoints show up in Recent work and reach Claude and Codex.

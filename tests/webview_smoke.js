@@ -122,6 +122,32 @@ panel.send({ type: 'state', state: { ...state, mcp: { agents: ['copilot'], conne
 if (!button(panel.app, 'Disconnect') || button(panel.app, 'Connect memory')) failures.push('panel: connected Copilot not shown as connected');
 panel.send({ type: 'state', state: { ...state, mcp: { agents: ['copilot'], connected: 'copilot', available: false } }, root: '/p' });
 if (!panel.app.textContent.includes('unavailable until AI Baton works again')) failures.push('panel: unavailable memory tools not explained');
+// A review running now: its own badge, never mistaken for work.
+panel.send({ type: 'state', state: { ...state, status: { ...state.status, agents: state.status.agents.map((a) => (a.id === 'claude'
+  ? { ...a, activity: null, reviewing: { model: 'sonnet', effort: 'high', started: iso(1) } } : a)) } }, root: '/p' });
+check('panel, reviewing', panel.app);
+const reviewing = panel.app.all().find((e) => e.className === 'badge reviewing');
+if (!reviewing || !/Reviewing \(read-only\), started .* · sonnet · high/.test(reviewing.attrs.title || '')) failures.push(`panel: no reviewing badge with its model (${reviewing && reviewing.attrs.title})`);
+if (panel.app.all().some((e) => e.className === 'badge last')) failures.push('panel: "last" shown next to "reviewing"');
+// Copilot with its own hooks: hooks and memory tools in all four combinations.
+const withCopilotHooks = (hookState, connected) => ({ ...state,
+  status: { ...state.status, agents: state.status.agents.map((a) => (a.id === 'copilot' ? { ...a, hooks: 'copilot' } : a)) },
+  hooks: { ...state.hooks, copilot: { state: hookState } }, mcp: { agents: ['copilot'], connected, available: true } });
+const copilotCard = () => panel.app.all().find((e) => e.className === 'card' && e.textContent.includes('Copilot'));
+panel.send({ type: 'state', state: withCopilotHooks('missing', null), root: '/p' });
+check('panel, Copilot without hooks or tools', panel.app);
+if (!button(copilotCard(), 'Install hooks') || !button(copilotCard(), 'Connect memory')) failures.push('panel: Copilot without hooks lacks Install hooks / Connect memory');
+if (copilotCard().textContent.includes('No memory hooks, so')) failures.push('panel: Copilot warned twice about missing hooks');
+panel.send({ type: 'state', state: withCopilotHooks('missing', 'copilot'), root: '/p' });
+if (!button(copilotCard(), 'Install hooks') || !button(copilotCard(), 'Disconnect') || button(copilotCard(), 'Connect memory')) failures.push('panel: Copilot with tools only');
+panel.send({ type: 'state', state: withCopilotHooks('ok', 'copilot'), root: '/p' });
+if (!copilotCard().textContent.includes('Memory hooks and tools on') || button(copilotCard(), 'Install hooks')) failures.push('panel: Copilot with hooks and tools');
+if (!copilotCard().textContent.includes('not in Local ones')) failures.push('panel: Copilot with hooks and tools does not say Local chats run no hooks');
+panel.send({ type: 'state', state: withCopilotHooks('ok', null), root: '/p' });
+check('panel, Copilot with hooks only', panel.app);
+if (button(copilotCard(), 'Install hooks') || copilotCard().textContent.includes('does not share memory')) failures.push('panel: Copilot with hooks only shows a warning');
+if (!button(copilotCard(), 'Connect memory tools')) failures.push('panel: Copilot with hooks only cannot add the memory tools');
+if (!copilotCard().textContent.includes('Copilot CLI chats (Local chats get none)')) failures.push('panel: Copilot with hooks only does not say Local chats run no hooks');
 panel.send({ type: 'state', state, root: '/p' });
 panel.send({ type: 'state', state: { ...state, hooks: { claude: { state: 'missing' } } }, root: '/p' });
 check('panel, hooks missing', panel.app);

@@ -64,10 +64,11 @@ def listed(lines):
     return {'changed': lines[:MAX_LISTED], 'changed_count': len(lines)}
 
 
-def from_git(root):
-    lines = (git(root, 'status', '--short') or '').splitlines()
-    return {'kind': 'git', 'branch': git(root, 'branch', '--show-current') or '',
-            'commit': git(root, 'rev-parse', '--short', 'HEAD') or '', **listed(lines)}
+def from_git(root, deadline=None):
+    run = lambda *args: git(root, *args, deadline=deadline)
+    lines = (run('status', '--short') or '').splitlines()
+    return {'kind': 'git', 'branch': run('branch', '--show-current') or '',
+            'commit': run('rev-parse', '--short', 'HEAD') or '', **listed(lines)}
 
 
 def shadow_exclude(root, deadline=None):
@@ -87,10 +88,13 @@ def from_shadow(root, mem, message, deadline=None):
     exclude = shadow_exclude(root, deadline)
     if exclude is None:
         return None
-    (git_dir / 'info').mkdir(exist_ok=True)
-    write_text(git_dir / 'info' / 'exclude', exclude)
-    # Outranks the project's .gitattributes: no clean filter (an external program) runs while snapshotting.
-    write_text(git_dir / 'info' / 'attributes', '* -filter\n')
+    try:
+        (git_dir / 'info').mkdir(exist_ok=True)
+        write_text(git_dir / 'info' / 'exclude', exclude, deadline=deadline)
+        # Outranks the project's .gitattributes: no clean filter (an external program) runs while snapshotting.
+        write_text(git_dir / 'info' / 'attributes', '* -filter\n', deadline=deadline)
+    except OSError:
+        return None  # E.g. held open on Windows: the caller lists changed files instead.
     if run('add', '-A', timeout=6) is None:
         return None
     before = run('rev-parse', '-q', '--verify', 'HEAD')
@@ -131,12 +135,13 @@ def from_files(root, since):
     return {'kind': 'files', **listed(['M ' + rel for _, rel in recent])}
 
 
-def capture(root, mem, since, message):
-    """Describe what changed at this checkpoint, using the best source available."""
-    if git(root, 'rev-parse', '--is-inside-work-tree') == 'true':
-        return from_git(root)
+def capture(root, mem, since, message, deadline=None):
+    """Describe what changed at this checkpoint, using the best source available. Past the `deadline` (monotonic)
+    git is skipped and the file list (no subprocess) is used."""
+    if git(root, 'rev-parse', '--is-inside-work-tree', deadline=deadline) == 'true':
+        return from_git(root, deadline)
     if shutil.which('git'):
-        result = from_shadow(root, mem, message)
+        result = from_shadow(root, mem, message, deadline)
         if result:
             return result
     return from_files(root, since)

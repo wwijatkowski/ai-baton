@@ -212,7 +212,8 @@ async function installHooks(ids) {
   const agents = ((state.status && state.status.agents) || []).filter((a) => ids.includes(a.id));
   const ok = await vscode.window.showInformationMessage(
     `Install AI Baton memory hooks for ${agents.map((a) => a.label).join(' and ')} once, for all projects? ` +
-    'They go into your user settings and do nothing in folders that are not set up for AI Baton.',
+    'They go into your user settings and do nothing in folders that are not set up for AI Baton.' +
+    (ids.includes('copilot') ? ' Copilot\'s also run for Copilot in a terminal (~/.copilot/hooks/ai-baton.json).' : ''),
     { modal: true }, 'Install');
   if (!ok) return false;
   try {
@@ -222,6 +223,10 @@ async function installHooks(ids) {
     return false;
   }
   if (ids.includes('codex')) approveHooks('codex');
+  if (ids.includes('copilot')) {
+    vscode.window.showInformationMessage('Copilot hooks installed. Copilot CLI chats get the shared context from their next message, open ones too, and ' +
+      'their turns are saved by themselves. Local chats run no hooks.');
+  }
   refreshAll();
   return true;
 }
@@ -405,6 +410,9 @@ function updateStatusBar() {
 
 // ---------- actions ----------
 
+// A new Copilot CLI chat (Copilot's agent runtime, the one that runs its hooks) in the chat view.
+const COPILOT_CLI_NEW_CHAT = 'workbench.action.chat.openNewChatSessionInPlace.copilotcli';
+
 async function openAgent(id, fresh) {
   const agent = ((state.status && state.status.agents) || []).find((a) => a.id === id);
   if (!agent) return;
@@ -418,6 +426,18 @@ async function openAgent(id, fresh) {
       'Switch Anyway');
     if (!go) return;
   }
+  // Copilot's hooks are user-level and optional: they count once installed.
+  let hooked = agent.hooks && (agent.hooks !== 'copilot' || (state.hooks && state.hooks[agent.id] && state.hooks[agent.id].state === 'ok'));
+  if (fresh && hooked && agent.hooks === 'copilot') {
+    // Copilot runs hooks only in Copilot CLI chats; its plain new chat is a Local one, which runs none.
+    try {
+      await vscode.commands.executeCommand(COPILOT_CLI_NEW_CHAT, 'sidebar');
+      return;
+    } catch (error) {
+      output.appendLine(`Copilot CLI chat not available, opening a Local one: ${error.message}`);
+      hooked = false;
+    }
+  }
   // JSON has no `undefined`: a null in newArgs means "argument left out" (Claude reads a null session id as a string).
   const args = fresh && agent.newCommand ? (agent.newArgs || []).map((a) => (a === null ? undefined : a)) : [];
   try {
@@ -427,7 +447,7 @@ async function openAgent(id, fresh) {
     output.appendLine(`${agent.label}: ${error.stack || error.message}`);
     return vscode.window.showErrorMessage(`Could not open ${agent.label}: ${error.message}`);
   }
-  if (!agent.hooks && !mcpAvailable(agent.id)) {
+  if (!hooked && !mcpAvailable(agent.id)) {
     // Agents without lifecycle hooks or AI Baton's MCP server get the shared context by hand.
     await vscode.env.clipboard.writeText(CONTEXT_PROMPT);
     vscode.window.showInformationMessage(`${agent.label} has no hooks. A request to load the shared context is on your clipboard; paste it into the chat.`);
@@ -507,8 +527,10 @@ async function addAgent() {
   if (pick.id === '__search') return findAgents();
   try {
     await baton(['add-agent', JSON.stringify(pick.candidate.agent)]);
+    const copilot = pick.candidate.agent.id === 'copilot' && String(pick.candidate.agent.extension).toLowerCase() === 'github.copilot-chat';
     vscode.window.showInformationMessage(pick.candidate.builtin
       ? `${pick.candidate.agent.label} is back. In projects set up without it, run AI Baton: Initialize Project again to add its hooks.`
+      : copilot ? 'Copilot added. For shared memory, use Install hooks on its card (Connect memory adds the memory tools).'
       : `${pick.candidate.agent.label} added. It has no memory hooks: use Connect memory on its card if it shows one; otherwise, when you open it, AI Baton copies a context request for you to paste.`);
   } catch (error) {
     vscode.window.showErrorMessage(error.message);
@@ -632,7 +654,10 @@ async function removeAgent(id) {
   }
   const ok = await vscode.window.showWarningMessage(
     `Remove ${agent.label} from AI Baton? The extension stays installed` +
-    (agent.source ? '.' : ' and existing project hooks keep working. Add it back any time with Add agent.'),
+    (agent.source ? '.' : ' and existing project hooks keep working. Add it back any time with Add agent.') +
+    // Copilot's hooks are a user-level file of their own: removing the card leaves them running.
+    (agent.hooks === 'copilot' && state.hooks && state.hooks[agent.id] && state.hooks[agent.id].state === 'ok'
+      ? ' Its memory hooks stay active; to remove them run: baton uninstall-hooks --agents=copilot.' : ''),
     { modal: true }, 'Remove');
   if (!ok) return;
   try {
@@ -778,10 +803,19 @@ async function askForReview(preset) {
 async function chooseReviewModel(agent) {
   const info = state.models[agent.id];
   const configured = modelLabel(agent.id) || 'as configured';
-  const model = await vscode.window.showQuickPick([
+  let model = await vscode.window.showQuickPick([
     { label: `Default (${configured})`, value: '' },
     ...info.options.map((o) => ({ label: o.label, description: o.value !== o.label ? o.value : '', detail: o.description || undefined, value: o.value })),
+    { label: '$(edit) Other model…', detail: 'Type a model id the list does not show, e.g. a new or older one.', other: true },
   ], { title: `${agent.label} reviews with which model?`, placeHolder: 'For this review only; new conversations keep their settings.', ignoreFocusOut: true });
+  if (model && model.other) {
+    // The CLI checks the same pattern (models.VALUE_RE) and passes any such id on: the agent knows its models best.
+    const typed = await vscode.window.showInputBox({ title: `${agent.label} reviews with which model?`,
+      prompt: 'Model id, as the agent\'s own CLI takes it (--model).', ignoreFocusOut: true,
+      validateInput: (v) => (/^[\w.:[\]-]{1,80}$/.test(v.trim()) && !v.trim().startsWith('-') ? null
+        : 'Letters, digits and . : [ ] - _ only (not starting with -), up to 80 characters.') });
+    model = typed && typed.trim() ? { label: typed.trim(), value: typed.trim() } : null;
+  }
   if (!model) return null;
   // "Default" runs the configured model (else the agent's default): offer that model's efforts.
   const effective = model.value || info.model || info.defaultModel;

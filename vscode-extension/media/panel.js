@@ -115,8 +115,18 @@
   }
 
   // Shown only when shared memory will not work for this agent, with the one-click fix.
-  function hookWarning(agent, info) {
+  function hookWarning(agent, info, mcp) {
     if (!info || info.state === 'ok') return null;
+    const tools = mcp && mcp.agents.includes(agent.id);  // Copilot: memory tools as well as hooks.
+    if (info.state === 'missing' && tools) {
+      const text = mcp.connected === agent.id ? 'Memory tools are on. Install hooks so it also gets the shared context at the start and its turns are saved by themselves.'
+        : 'Memory hooks are not installed, so this agent does not share memory.';
+      return h('div', { class: 'warning small' }, h('span', null, text),
+        h('button', { onclick: () => send('installHooks', { agent: agent.id }),
+          title: 'Hooks in your Copilot settings, for every project (also Copilot in a terminal)' }, 'Install hooks'),
+        mcp.connected !== agent.id && h('button', { onclick: () => send('connectMemory', { agent: agent.id }),
+          title: 'Only AI Baton\'s memory tools (an MCP server run by this extension); it decides when to call them' }, 'Connect memory'));
+    }
     const text = {
       missing: 'Memory hooks are not installed, so this agent does not share memory.',
       untrusted: `${agent.label} has not approved the memory hooks yet, so it does not share memory.`,
@@ -127,15 +137,26 @@
       fix && h('button', { onclick: () => send(fix[0], { agent: agent.id }) }, fix[1]));
   }
 
-  // Agents without hooks whose chat uses VS Code's MCP servers (Copilot): AI Baton's memory tools, called by the agent.
-  function mcpNote(agent, mcp) {
+  // Agents whose chat uses VS Code's MCP servers (Copilot): AI Baton's memory tools, called by the agent. With its
+  // hooks too, the tools are optional (searching older checkpoints); hookWarning covers missing hooks.
+  function mcpNote(agent, mcp, info) {
     if (!mcp || !mcp.agents.includes(agent.id)) return null;
     if (mcp.connected === agent.id) {
-      const text = mcp.available ? 'Memory tools on: it decides when to call them (agent mode).'
-        : 'Memory tools on, but unavailable until AI Baton works again (see above).';
+      const text = !mcp.available ? 'Memory tools on, but unavailable until AI Baton works again (see above).'
+        : info && info.state === 'ok' ? 'Memory hooks and tools on. The hooks run in Copilot CLI chats, not in Local ones.'
+          : 'Memory tools on: it decides when to call them (agent mode).';
       return h('div', { class: 'small muted row' }, h('span', null, text),
         h('button', { class: 'link', onclick: () => send('disconnectMemory', { agent: agent.id }),
           title: 'Stop offering AI Baton\'s MCP server to this agent' }, 'Disconnect'));
+    }
+    if (agent.hooks) {
+      // Hooks only (or not installed yet, which hookWarning covers): the tools stay one quiet click away. Copilot runs
+      // hooks only in its Copilot CLI chats (seen live, tests/live); a Local chat gets no memory from them.
+      return info && info.state === 'ok' ? h('div', { class: 'small muted row' },
+        h('span', null, 'Memory hooks on, in Copilot CLI chats (Local chats get none).'),
+        h('button', { class: 'link', onclick: () => send('connectMemory', { agent: agent.id }),
+          title: 'Also give it AI Baton\'s memory tools (an MCP server run by this extension), e.g. to search older checkpoints' },
+        'Connect memory tools')) : null;
     }
     return h('div', { class: 'warning small' }, h('span', null, 'No memory hooks, so this agent does not share memory yet.'),
       h('button', { onclick: () => send('connectMemory', { agent: agent.id }),
@@ -155,12 +176,15 @@
             h('span', { class: 'dot', style: { background: color(a.id, i) } }),
             h('span', { class: 'name' }, a.label),
             working && h('span', { class: 'badge working' }, 'working'),
-            !working && st.last_agent === a.id && h('span', { class: 'badge last' }, 'last')),
+            // A review (read-only, saves nothing to the project's memory) by this agent is running now.
+            a.reviewing && h('span', { class: 'badge reviewing', title: `Reviewing (read-only), started ${ago(a.reviewing.started)}` +
+              ([a.reviewing.model, a.reviewing.effort].filter(Boolean).length ? ` · ${[a.reviewing.model, a.reviewing.effort].filter(Boolean).join(' · ')}` : '') }, 'reviewing'),
+            !working && !a.reviewing && st.last_agent === a.id && h('span', { class: 'badge last' }, 'last')),
           st.initialized && h('div', { class: 'small muted' },
             cp ? `Checkpoint ${ago(cp.saved_at)}${cp.branch ? ' · ' + cp.branch : ''}${cp.commit ? ' @ ' + cp.commit.slice(0, 7) : ''}` : 'No checkpoint'),
           cp && cp.summary && h('p', { class: 'summary', title: plain(cp.summary) }, plain(cp.summary)),
-          st.initialized && hookWarning(a, hooks && hooks[a.id]),
-          st.initialized && mcpNote(a, mcp),
+          st.initialized && hookWarning(a, hooks && hooks[a.id], mcp),
+          st.initialized && mcpNote(a, mcp, hooks && hooks[a.id]),
           modelPicker(a.id, models),
           h('div', { class: 'row' },
             h('button', { class: 'primary', onclick: () => send('open', { agent: a.id }) }, 'Open'),

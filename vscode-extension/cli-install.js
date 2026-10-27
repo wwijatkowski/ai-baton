@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 
 const VERSION_FILE = 'VERSION';
+const BUILD_FILE = 'BUILD';  // A hash of the bundled files (scripts/bundle-cli.sh); older bundles have none.
 const CURRENT_FILE = 'current-version';  // Not 'CURRENT': macOS and Windows would take it for the old 'current'.
 const LOCK_STALE_MS = 2 * 60 * 1000;
 const LAUNCHER = `#!/usr/bin/env python3
@@ -36,6 +37,19 @@ function readVersion(dir) {
     return fs.readFileSync(path.join(dir, VERSION_FILE), 'utf8').trim();
   } catch {
     return null;
+  }
+}
+
+// A bundle's install id, which names its folder in versions/: the version plus the build hash, so a test build with
+// an unchanged version still replaces the installed CLI. Bundles without a BUILD file use the version alone.
+function readId(dir) {
+  const version = readVersion(dir);
+  if (!version) return null;
+  try {
+    const build = fs.readFileSync(path.join(dir, BUILD_FILE), 'utf8').trim();
+    return /^[0-9a-f]{6,64}$/.test(build) ? `${version}-${build}` : version;
+  } catch {
+    return version;
   }
 }
 
@@ -108,15 +122,15 @@ function releaseLock(target, token) {
   }
 }
 
-// Installs `bundled` into `target` unless that version is already current.
+// Installs `bundled` into `target` unless that build is already current.
 // Returns { home, updated }, { home, updated: false, busy: true } while another window installs, or null without a bundle.
 function installCli(bundled, target) {
-  const version = readVersion(bundled);
+  const version = readId(bundled);
   if (!version) return null;
   const launcher = path.join(target, 'bin', 'baton');
   // The version in use now: current-version, or the `current` symlink of installs from before it existed.
   const installed = currentVersion(target) || readVersion(path.join(target, 'current'));
-  if (currentVersion(target) === version && readVersion(path.join(target, 'versions', version)) === version &&
+  if (currentVersion(target) === version && readId(path.join(target, 'versions', version)) === version &&
       fs.existsSync(launcher)) {
     return { home: target, updated: false };
   }
@@ -126,7 +140,7 @@ function installCli(bundled, target) {
   if (!token) return { home: target, updated: false, busy: true };
   try {
     const dest = path.join(target, 'versions', version);
-    if (readVersion(dest) !== version) {
+    if (readId(dest) !== version) {
       // Copy beside, then rename into place: a version folder is either complete or absent.
       const staging = `${dest}.tmp-${process.pid}`;
       fs.rmSync(staging, { recursive: true, force: true });

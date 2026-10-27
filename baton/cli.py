@@ -45,7 +45,7 @@ def main(argv=None):
     p.add_argument('agent')
     p.add_argument('--global', dest='user_level', action='store_true', help='installed in user settings, not the project')
     p = sub.add_parser('install-hooks', help='install memory hooks once for all projects (user settings)')
-    p.add_argument('--agents', help='comma-separated agent ids (default: all agents with hooks)')
+    p.add_argument('--agents', help='comma-separated agent ids (default: all agents with hooks; Copilot only when named)')
     p = sub.add_parser('uninstall-hooks', help='remove the memory hooks from user settings (and optionally a project)')
     p.add_argument('--agents', help='comma-separated agent ids (default: all)')
     p.add_argument('--project', help='also remove project hooks from this folder')
@@ -85,6 +85,7 @@ def main(argv=None):
     p.add_argument('goal', nargs='?', help='what the change is meant to do')
     p.add_argument('--agent', required=True, help='reviewer, e.g. codex or claude')
     p.add_argument('--commit', help='review this commit instead of the uncommitted changes')
+    p.add_argument('--base', help='review the commits of this branch since it left BASE (e.g. main), as a pull request')
     p.add_argument('--focus', help='what the reviewer should pay special attention to')
     p.add_argument('--session', help='session whose work this is (its summary tells the reviewer the goal)')
     p.add_argument('--model', help='reviewer model for this review only (default: as configured for the agent)')
@@ -194,7 +195,7 @@ def main(argv=None):
     elif args.command == 'review':
         try:
             result = review.review(args.path, args.agent, args.goal, args.commit, args.focus, args.session,
-                                   args.model, args.effort)
+                                   args.model, args.effort, args.base)
         except review.ReviewError as error:
             sys.exit(f'Error: {error}')
         print(json.dumps(result, ensure_ascii=False) if args.json

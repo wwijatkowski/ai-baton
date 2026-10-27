@@ -29,7 +29,11 @@ exports.run = async function run() {
   // The bundled CLI was installed into the (throwaway) home folder, and the extension ran it for this project.
   const version = require(path.join(extension.extensionPath, 'package.json')).version;
   const home = path.join(os.homedir(), '.ai-baton');
-  assert.strictEqual(fs.readFileSync(path.join(home, 'current-version'), 'utf8').trim(), version);
+  // Installed as <version>-<build>: BUILD is the bundle's content hash (scripts/bundle-cli.sh).
+  const build = fs.readFileSync(path.join(extension.extensionPath, 'cli', 'BUILD'), 'utf8').trim();
+  const installed = fs.readFileSync(path.join(home, 'current-version'), 'utf8').trim();
+  assert.strictEqual(installed, `${version}-${build}`);
+  assert.ok(fs.existsSync(path.join(home, 'versions', installed, 'baton', 'cli.py')), 'the installed version folder is complete');
   const project = process.env.BATON_TEST_PROJECT;
   // .native expands Windows short names (RUNNER~1) the way Python does.
   assert.strictEqual(fs.realpathSync.native(state.status.root), fs.realpathSync.native(project));
