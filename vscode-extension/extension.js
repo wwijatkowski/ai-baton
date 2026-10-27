@@ -778,10 +778,19 @@ async function askForReview(preset) {
 async function chooseReviewModel(agent) {
   const info = state.models[agent.id];
   const configured = modelLabel(agent.id) || 'as configured';
-  const model = await vscode.window.showQuickPick([
+  let model = await vscode.window.showQuickPick([
     { label: `Default (${configured})`, value: '' },
     ...info.options.map((o) => ({ label: o.label, description: o.value !== o.label ? o.value : '', detail: o.description || undefined, value: o.value })),
+    { label: '$(edit) Other model…', detail: 'Type a model id the list does not show, e.g. a new or older one.', other: true },
   ], { title: `${agent.label} reviews with which model?`, placeHolder: 'For this review only; new conversations keep their settings.', ignoreFocusOut: true });
+  if (model && model.other) {
+    // The CLI checks the same pattern (models.VALUE_RE) and passes any such id on: the agent knows its models best.
+    const typed = await vscode.window.showInputBox({ title: `${agent.label} reviews with which model?`,
+      prompt: 'Model id, as the agent\'s own CLI takes it (--model).', ignoreFocusOut: true,
+      validateInput: (v) => (/^[\w.:[\]-]{1,80}$/.test(v.trim()) && !v.trim().startsWith('-') ? null
+        : 'Letters, digits and . : [ ] - _ only (not starting with -), up to 80 characters.') });
+    model = typed && typed.trim() ? { label: typed.trim(), value: typed.trim() } : null;
+  }
   if (!model) return null;
   // "Default" runs the configured model (else the agent's default): offer that model's efforts.
   const effective = model.value || info.model || info.defaultModel;

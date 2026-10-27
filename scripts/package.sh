@@ -12,7 +12,7 @@ cd "$EXT"
 BASE=https://github.com/wwijatkowski/ai-baton
 npx --yes @vscode/vsce@4.0.0 package --out "$ROOT/ai-baton-$VERSION.vsix" \
   --baseContentUrl "$BASE/blob/HEAD/vscode-extension/" --baseImagesUrl "$BASE/raw/HEAD/vscode-extension/"
-for f in extension/cli/VERSION extension/cli/bin/baton extension/cli/baton/cli.py extension/cli-install.js extension/LICENSE.txt; do
+for f in extension/cli/VERSION extension/cli/BUILD extension/cli/bin/baton extension/cli/baton/cli.py extension/cli-install.js extension/LICENSE.txt; do
   unzip -l "$ROOT/ai-baton-$VERSION.vsix" "$f" >/dev/null || { echo "Missing in the package: $f"; exit 1; }
 done
 echo "Built ai-baton-$VERSION.vsix (CLI $VERSION included)"

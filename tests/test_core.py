@@ -776,6 +776,7 @@ class ReviewTest(unittest.TestCase):
         claude = review.review(self.project, 'claude')['review']
         # Read-only by construction, and flagged so the reviewer's own hooks stay out of shared memory.
         self.assertIn('--tools Read,Grep,Glob', claude)
+        self.assertIn('--no-session-persistence', claude)  # Not the user's conversation, nor their last model.
         self.assertIn('--sandbox read-only', result['review'])
         self.assertIn('env: 1', claude)
         self.assertIn('env: 1', result['review'])
@@ -1292,8 +1293,34 @@ class CliInstallTest(unittest.TestCase):
         (target / '.install.lock').unlink()
         self.run_node(call)
         self.assertEqual(sorted(os.listdir(target / 'versions')), ['0.3.1', '0.3.2'])  # Older ones are dropped.
+        # Same version, other files (a test build): the build hash in BUILD names a new folder and switches to it.
+        (target / '.install.lock').unlink(missing_ok=True)
+        self.bundle(bundled, '0.3.2')
+        (bundled / 'BUILD').write_text('abc123def456\n')
+        self.assertTrue(json.loads(self.run_node(call))['updated'])
+        self.assertEqual(current(), '0.3.2-abc123def456')
+        self.assertFalse(json.loads(self.run_node(call))['updated'])
+        (bundled / 'BUILD').write_text('0123456789ab\n')
+        self.assertTrue(json.loads(self.run_node(call))['updated'])
+        self.assertEqual(sorted(os.listdir(target / 'versions')), ['0.3.2-0123456789ab', '0.3.2-abc123def456'])
+        status = subprocess.run([sys.executable, str(target / 'bin' / 'baton'), 'status', str(tmp.name)],
+                                capture_output=True, text=True, env=env)
+        self.assertEqual(status.returncode, 0, status.stderr)
         # No bundle (a development copy of the extension): nothing to install.
         self.assertEqual(self.run_node(f'console.log(JSON.stringify(installCli("/nonexistent", {json.dumps(str(target))})))'), 'null')
+
+    @unittest.skipIf(WINDOWS or not shutil.which('sh'), 'bundle-cli.sh is a POSIX shell script')
+    def test_bundle_writes_a_stable_build_hash(self):
+        # bundle-cli.sh writes into vscode-extension/cli (gitignored), as `vsce package` does.
+        cli = ROOT / 'vscode-extension' / 'cli'
+        bundle = lambda: subprocess.run(['sh', str(ROOT / 'scripts' / 'bundle-cli.sh')], capture_output=True, text=True)
+        self.assertEqual(bundle().returncode, 0)
+        build = (cli / 'BUILD').read_text().strip()
+        self.assertRegex(build, r'^[0-9a-f]{12}$')
+        (ROOT / 'baton' / '__pycache__').mkdir(exist_ok=True)  # Caches are left out of the bundle and the hash.
+        self.assertEqual(bundle().returncode, 0)
+        self.assertEqual((cli / 'BUILD').read_text().strip(), build)
+        self.assertFalse(list(cli.rglob('__pycache__')))
 
     @unittest.skipIf(WINDOWS, 'installs from before current-version used a symlink, which Windows did not support anyway')
     def test_upgrades_a_symlink_install(self):

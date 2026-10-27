@@ -558,6 +558,24 @@ test('Ask for review with another model and effort, offered again next time', as
   assert.deepStrictEqual(h.cliArgs('review')[1].slice(6, 10), ['--model', 'sonnet', '--effort', 'low']);
 });
 
+test('Ask for review with a model id typed by hand', async (h) => {
+  h.cli.models = () => ({ claude: { model: '', effort: '', efforts: ['low', 'high'], defaultLabel: 'set by your plan',
+    options: [{ value: 'opus', label: 'Opus' }] } });
+  let check;
+  h.on('pick', /\(1\/3\)/, pickSession('claude-s1'));
+  h.on('pick', /\(2\/3\)/, (items) => items.find((i) => i.choose && i.agent.id === 'claude'));
+  h.on('pick', /Claude reviews with which model/, (items) => items[items.length - 1]);
+  h.on('input', /Claude reviews with which model/, (options) => { check = options.validateInput; return ' claude-opus-4-1 '; });
+  h.on('pick', /Claude · claude-opus-4-1 reviews with which effort/, (items) => items[0]);
+  h.on('input', /\(3\/3\)/, '');
+  await h.start();
+  await h.commands['aiBaton.askForReview']();
+  assert.strictEqual(check('--help'), 'Letters, digits and . : [ ] - _ only (not starting with -), up to 80 characters.');
+  assert.strictEqual(check('a b'), 'Letters, digits and . : [ ] - _ only (not starting with -), up to 80 characters.');
+  assert.strictEqual(check('opus[1m]'), null);
+  assert.deepStrictEqual(h.cliArgs('review')[0].slice(6, 8), ['--model', 'claude-opus-4-1']);
+});
+
 test('a review choice is remembered only once the review has run', async (h) => {
   h.cli.models = () => ({ codex: { model: 'mini', effort: '', efforts: ['low', 'high'], defaultLabel: '',
     options: [{ value: 'mini', label: 'Mini', efforts: ['low'] }, { value: 'big', label: 'Big', efforts: ['low', 'high'] }] } });

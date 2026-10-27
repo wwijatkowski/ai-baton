@@ -359,8 +359,9 @@ def run_reviewer(kind, root, prompt, diff, notes='', block='diff', model='', eff
     else:
         # --tools limits which tools exist (not just which are allowed), so user settings cannot widen it.
         choice = ([f'--model={model}'] if model else []) + ([f'--effort={effort}'] if effort else [])
-        code, text, err = run([exe, '-p', prompt, '--tools', 'Read,Grep,Glob', '--strict-mcp-config', *choice],
-                              root, stdin)
+        # No session file: a review is not the user's conversation (it would also pass for Claude's last used model).
+        code, text, err = run([exe, '-p', prompt, '--tools', 'Read,Grep,Glob', '--strict-mcp-config',
+                               '--no-session-persistence', *choice], root, stdin)
     if code != 0:
         # Never pass a failed or partial run off as a review.
         raise ReviewError(f'{kind} failed (exit {code}): {(err or text).strip()[-300:]}')
