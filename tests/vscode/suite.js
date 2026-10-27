@@ -51,7 +51,7 @@ exports.run = async function run() {
   const stopHook = (file) => JSON.parse(fs.readFileSync(path.join(os.homedir(), file), 'utf8')).hooks.Stop[0].hooks[0];
   for (const [agent, file] of [['claude', '.claude/settings.json'], ['codex', '.codex/hooks.json']]) {
     const hook = stopHook(file);
-    const input = JSON.stringify({ cwd: project, hook_event_name: 'Stop', session_id: `installed-${agent}`,
+    const input = JSON.stringify({ cwd: project, hook_event_name: 'Stop', session_id: `installed-${agent}`, transcript_path: '',
       last_assistant_message: `Reply from ${agent} through the installed hook.` });
     const output = hook.args ? cp.execFileSync(hook.command, hook.args, { input, encoding: 'utf8' })
       : cp.execSync(hook.command, { input, encoding: 'utf8' });  // cmd.exe on Windows, /bin/sh elsewhere.

@@ -43,6 +43,13 @@ let galleryCache = null;
 const STALE_MINUTES = 60;
 
 const REVIEW_CHOICE = 'aiBaton.reviewChoice';  // Last model and effort chosen for a review, per agent.
+// AI Baton's MCP server (`baton mcp`) for Copilot, offered to VS Code through its MCP provider API: no settings file to
+// edit, every profile and remote sees it, and it always runs the current CLI. Off until the user connects it (VS Code
+// trusts extension-provided servers without asking), on for every workspace once connected. The choice is a user
+// setting (aiBaton.memoryTools, application scope), so every window sees a Disconnect at once.
+const MCP_PROVIDER = 'aiBaton.memory';
+const MCP_EXTENSIONS = new Set(['github.copilot-chat']);  // Agents whose chat uses VS Code's MCP servers.
+let mcpChanged = null;  // Fires when the definitions change; null when this VS Code has no provider API.
 let state = { status: null, usage: null, projectUsage: null, models: null, scope: 'project', error: null, loading: true };
 let view, recentPanel, reviewDoc, statusItem, timer, watcher, output, extensionUri, memento;
 
@@ -51,6 +58,7 @@ function config(key) {
 }
 
 const { installCli } = require('./cli-install');
+const { version: VERSION } = require('./package.json');
 // Windows needs 3.11: older versions cannot start in the empty environment Codex gives hooks there (no SYSTEMROOT).
 const MIN_PYTHON = process.platform === 'win32' ? [3, 11] : [3, 9];
 let cliHome;
@@ -219,6 +227,60 @@ async function installHooks(ids) {
 }
 
 // Codex only runs hooks the user trusted; its chat box has a hooks button (Review hooks), its CLI has /hooks.
+function mcpSupported() {
+  return !!(vscode.lm && typeof vscode.lm.registerMcpServerDefinitionProvider === 'function' &&
+    typeof vscode.McpStdioServerDefinition === 'function');
+}
+
+function registerMcp(context) {
+  if (!mcpSupported()) return;
+  const emitter = new vscode.EventEmitter();
+  try {
+    context.subscriptions.push(emitter, vscode.lm.registerMcpServerDefinitionProvider(MCP_PROVIDER, {
+      onDidChangeMcpServerDefinitions: emitter.event,
+      provideMcpServerDefinitions: () => mcpDefinitions(),
+      // Checked again when VS Code starts the server: it may hold a definition from before a Disconnect.
+      resolveMcpServerDefinition: (server) => (mcpDefinitions().length ? server : undefined),
+    }));
+    mcpChanged = emitter;
+  } catch (error) {
+    emitter.dispose();
+    output.appendLine(`MCP provider not registered: ${error.message}`);
+  }
+}
+
+function mcpConnected() {
+  return (mcpChanged && config('memoryTools')) || null;
+}
+
+// The server can run: connected, and the CLI and Python work (initialize succeeded).
+function mcpAvailable(id) {
+  return !!(mcpChanged && ready && python && cliHome && mcpConnected() === id);
+}
+
+// What VS Code starts: the same Python and CLI the panel uses. Nothing until connected and the CLI is ready.
+function mcpDefinitions() {
+  const agent = mcpConnected();
+  if (!agent || !mcpAvailable(agent)) return [];
+  // Positional arguments (label, command, args, env, version): what VS Code 1.143 implements, whatever the guide shows.
+  return [new vscode.McpStdioServerDefinition('AI Baton', python.command,
+    [...python.args, batonPath(), 'mcp', '--agent', agent], {}, VERSION)];
+}
+
+// Connect memory / Disconnect on the card of an agent whose chat uses VS Code's MCP servers (Copilot). The setting's
+// change event (in every window) tells VS Code; see onDidChangeConfiguration in activate.
+async function setMcpAgent(id, { quiet = false } = {}) {
+  const agent = id && ((state.status && state.status.agents) || []).find((a) => a.id === id);
+  await vscode.workspace.getConfiguration('aiBaton').update('memoryTools', agent ? id : undefined,
+    vscode.ConfigurationTarget.Global);
+  render();
+  if (agent && !quiet) {
+    vscode.window.showInformationMessage(`${agent.label} can now use AI Baton's memory tools in agent mode, in every ` +
+      'workspace. It decides when to call them: the instructions ask it to load the shared context when a chat starts ' +
+      'and to save a checkpoint after its work. If a chat skips them, ask it to call baton_context or baton_checkpoint.');
+  }
+}
+
 async function approveHooks(id) {
   const agent = ((state.status && state.status.agents) || []).find((a) => a.id === id);
   if (!agent) return;
@@ -365,8 +427,8 @@ async function openAgent(id, fresh) {
     output.appendLine(`${agent.label}: ${error.stack || error.message}`);
     return vscode.window.showErrorMessage(`Could not open ${agent.label}: ${error.message}`);
   }
-  if (!agent.hooks) {
-    // Agents without lifecycle hooks get the shared context by hand.
+  if (!agent.hooks && !mcpAvailable(agent.id)) {
+    // Agents without lifecycle hooks or AI Baton's MCP server get the shared context by hand.
     await vscode.env.clipboard.writeText(CONTEXT_PROMPT);
     vscode.window.showInformationMessage(`${agent.label} has no hooks. A request to load the shared context is on your clipboard; paste it into the chat.`);
   }
@@ -413,7 +475,8 @@ function agentCandidates() {
     const pkg = ext.packageJSON || {};
     const known = KNOWN_AGENTS[key];
     const categories = (pkg.categories || []).map((c) => String(c).toLowerCase());
-    if (registered.has(key) || key.endsWith('.ai-baton') || pkg.isBuiltin) continue;  // Never offer ourselves.
+    // Never offer ourselves; built-in extensions only when they are a known agent (VS Code now ships Copilot Chat).
+    if (registered.has(key) || key.endsWith('.ai-baton') || (pkg.isBuiltin && !known)) continue;
     if (!known && !categories.some((c) => AGENT_CATEGORIES.includes(c))) continue;
     const containers = Object.values((pkg.contributes && pkg.contributes.viewsContainers) || {}).flat();
     const openCommand = (known && known.openCommand) || (containers[0] && `workbench.view.extension.${containers[0].id}`);
@@ -446,7 +509,7 @@ async function addAgent() {
     await baton(['add-agent', JSON.stringify(pick.candidate.agent)]);
     vscode.window.showInformationMessage(pick.candidate.builtin
       ? `${pick.candidate.agent.label} is back. In projects set up without it, run AI Baton: Initialize Project again to add its hooks.`
-      : `${pick.candidate.agent.label} added. It has no memory hooks: when you open it, AI Baton copies a context request for you to paste.`);
+      : `${pick.candidate.agent.label} added. It has no memory hooks: use Connect memory on its card if it shows one; otherwise, when you open it, AI Baton copies a context request for you to paste.`);
   } catch (error) {
     vscode.window.showErrorMessage(error.message);
   }
@@ -574,6 +637,8 @@ async function removeAgent(id) {
   if (!ok) return;
   try {
     await baton(['remove-agent', agent.id]);
+    // Its card (and Disconnect) disappears: its memory tools go too.
+    if (mcpConnected() === agent.id) await setMcpAgent(null);
   } catch (error) {
     vscode.window.showErrorMessage(error.message);
   }
@@ -881,6 +946,8 @@ class PanelProvider {
       else if (msg.cmd === 'review') askForReview(msg.entry);
       else if (msg.cmd === 'installHooks') installHooks([msg.agent]);
       else if (msg.cmd === 'approveHooks') approveHooks(msg.agent);
+      else if (msg.cmd === 'connectMemory') setMcpAgent(msg.agent);
+      else if (msg.cmd === 'disconnectMemory') setMcpAgent(null);
       else if (msg.cmd === 'session') openSession(msg.agent, msg.session);
       else if (msg.cmd === 'liveUsage') showLiveUsage(msg.agent);
       else if (msg.cmd === 'copy') copySummary(msg.text);
@@ -899,6 +966,13 @@ class PanelProvider {
 
 function render() {
   updateStatusBar();
+  // Which cards offer Connect memory, and which one has it.
+  state.mcp = mcpChanged ? {
+    agents: ((state.status && state.status.agents) || [])
+      .filter((a) => MCP_EXTENSIONS.has((a.extension || '').toLowerCase())).map((a) => a.id),
+    connected: mcpConnected(),
+    available: !!mcpConnected() && mcpAvailable(mcpConnected()),
+  } : null;
   if (view && view.visible) view.webview.postMessage({ type: 'state', state, root: workspaceRoot() });
 }
 
@@ -906,6 +980,7 @@ async function activate(context) {
   extensionUri = context.extensionUri;
   memento = context.globalState;
   output = vscode.window.createOutputChannel('AI Baton');
+  registerMcp(context);
   statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusItem.command = 'aiBaton.switchAgent';
   context.subscriptions.push(
@@ -929,6 +1004,10 @@ async function activate(context) {
       if (state.status && root && root !== (state.status.root || state.status.path)) refreshAll();
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('aiBaton.memoryTools')) {
+        if (mcpChanged) mcpChanged.fire();  // Connect or Disconnect, from this window or another one.
+        render();
+      }
       if (e.affectsConfiguration('aiBaton.home') || e.affectsConfiguration('aiBaton.python')) initialize(context);
       else if (e.affectsConfiguration('aiBaton') && ready) restartTimer();
     }),
@@ -945,6 +1024,7 @@ async function initialize(context) {
   const generation = ++initGeneration;  // A newer call (settings changed again) makes this one's result obsolete.
   clearInterval(timer);
   ready = false;
+  if (mcpChanged) mcpChanged.fire();  // Not runnable until this succeeds.
   let problem = null;
   try {
     cliHome = resolveCli(context);
@@ -972,6 +1052,7 @@ async function initialize(context) {
   }
   state.error = null;
   ready = true;
+  if (mcpChanged) mcpChanged.fire();  // The Python or CLI the MCP server runs with may have changed.
   restartTimer();
   refreshAll();
 }

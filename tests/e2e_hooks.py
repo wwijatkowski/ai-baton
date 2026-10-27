@@ -53,7 +53,8 @@ def main():
         return (json.loads((mem / 'seen.json').read_text(encoding='utf-8')) if (mem / 'seen.json').exists() else {}).get(by, {})
 
     def checkpoint(name, text):
-        baton('hook', name, payload=json.dumps({'cwd': str(project), 'hook_event_name': 'Stop',
+        # transcript_path: Claude always sends it (hook.foreign_call ignores Claude hooks run by other agents).
+        baton('hook', name, payload=json.dumps({'cwd': str(project), 'hook_event_name': 'Stop', 'transcript_path': '',
                                                 'session_id': f'seed-{name}', 'last_assistant_message': text}))
         return json.loads((mem / f'{name}.json').read_text(encoding='utf-8'))['saved_at']
 
@@ -90,6 +91,15 @@ def main():
     agent([codex, 'exec', '--skip-git-repo-check', 'say hi again'], 'codex')
     check([s for s in seen('codex').values() if s.get('codex') == codex_at],
           f"Codex's new conversation got Codex's earlier checkpoint: {seen('codex')}")
+
+    # `baton mcp` (memory for agents without hooks): Claude Code, as a real MCP client, starts it and connects.
+    run = subprocess.run([claude, 'mcp', 'add', '--scope', 'user', 'baton', '--', sys.executable,
+                          str(ROOT / 'bin' / 'baton'), 'mcp', '--agent', 'copilot'], cwd=project, env=env,
+                         capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120)
+    check(run.returncode == 0, f'claude mcp add: {run.stdout}{run.stderr}')
+    run = subprocess.run([claude, 'mcp', 'list'], cwd=project, env=env, capture_output=True, text=True,
+                         encoding='utf-8', errors='replace', stdin=subprocess.DEVNULL, timeout=120)
+    check('Connected' in run.stdout and 'Failed' not in run.stdout, f'claude mcp list: {run.stdout}{run.stderr}')
 
     # Each prompt hook marked its conversation as working.
     activity = json.loads((mem / 'activity.json').read_text(encoding='utf-8'))

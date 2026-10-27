@@ -63,7 +63,8 @@ def alive(pid):
 
 
 def payload(project, event, session='s1', **extra):
-    return {'cwd': str(project), 'hook_event_name': event, 'session_id': session, **extra}
+    # Claude Code sends transcript_path with every event (hook.foreign_call).
+    return {'cwd': str(project), 'hook_event_name': event, 'session_id': session, 'transcript_path': '', **extra}
 
 
 def context(result):
@@ -196,6 +197,59 @@ class HookTest(unittest.TestCase):
         self.assertEqual(hook.run('claude', payload(self.project, 'UserPromptSubmit', 's2', prompt='d')), {})
         # Without a session id it cannot tell its own conversations apart: its own checkpoint stays out.
         self.assertNotIn('validation', context(hook.run('claude', payload(self.project, 'SessionStart'))))
+
+    def test_copilot_running_claude_hooks_changes_nothing(self):
+        # Copilot in VS Code runs Claude's hook files with its own payload (documented fields): it must not pass for
+        # Claude, at any event.
+        mem = self.project / '.agent-memory'
+        before = sorted(p.name for p in mem.iterdir()) if mem.exists() else []
+        for event, extra in (('SessionStart', {'source': 'new'}), ('UserPromptSubmit', {'prompt': 'hi'}),
+                             ('Stop', {'transcript_path': '/t.jsonl', 'stop_reason': 'end_turn', 'stop_hook_active': False,
+                                       'last_assistant_message': 'Copilot did X.'})):
+            copilot = {'hook_event_name': event, 'session_id': 'cp1', 'cwd': str(self.project),
+                       'timestamp': '2026-10-27T12:00:00Z', **extra}
+            self.assertEqual(hook.run('claude', copilot), {})
+        self.assertEqual(sorted(p.name for p in mem.iterdir()) if mem.exists() else [], before)
+        self.assertFalse((mem / 'claude.json').exists())
+        # Claude itself (transcript_path, no timestamp) still works.
+        self.assertIn('This project uses AI Baton', context(hook.run('claude', payload(self.project, 'SessionStart'))))
+
+    def test_claude_keeps_its_project_after_cd_into_another_repo(self):
+        # The agent ran `cd` into a sibling repo: the payload cwd moved, the session start folder did not.
+        sibling = Path(self.tmp.name) / 'app'
+        sibling.mkdir()
+        with mock.patch.dict(os.environ, {'CLAUDE_PROJECT_DIR': str(self.project)}):
+            hook.run('claude', payload(sibling, 'UserPromptSubmit', 'k1', prompt='go'))
+            hook.run('claude', payload(sibling, 'Stop', 'k1', last_assistant_message='Fixed the app repo.'))
+        self.assertIn('Fixed the app repo', read_json(self.project / '.agent-memory/claude.json')['summary'])
+        activity = read_json(self.project / '.agent-memory/activity.json')['claude']['sessions']['k1']
+        self.assertEqual(activity['state'], 'idle', 'no false "may still be active" afterwards')
+        # Started outside any project but working in one: the payload cwd still counts. Other agents ignore the variable.
+        with mock.patch.dict(os.environ, {'CLAUDE_PROJECT_DIR': str(sibling)}):
+            self.assertIn('This project uses AI Baton', context(hook.run('claude', payload(self.project, 'SessionStart', 'k2'))))
+            self.assertEqual(hook.run('codex', payload(sibling, 'SessionStart', 'c1')), {})
+
+    def test_foreign_call_signatures(self):
+        # Claude Code's fields as captured from the real CLI (SessionStart, UserPromptSubmit) and as documented (Stop).
+        claude = {
+            'SessionStart': {'session_id': 's', 'transcript_path': '/t', 'cwd': '/p', 'hook_event_name': 'SessionStart',
+                             'source': 'startup'},
+            'UserPromptSubmit': {'session_id': 's', 'transcript_path': '/t', 'cwd': '/p', 'prompt_id': 'x',
+                                 'permission_mode': 'default', 'hook_event_name': 'UserPromptSubmit', 'prompt': 'hi'},
+            'Stop': {'session_id': 's', 'transcript_path': '/t', 'cwd': '/p', 'permission_mode': 'default',
+                     'hook_event_name': 'Stop', 'stop_hook_active': False, 'last_assistant_message': 'Done.'},
+        }
+        for event, fields in claude.items():
+            self.assertFalse(hook.foreign_call('claude', fields), event)
+            # Copilot's documented payloads for the same events, with and without a transcript_path.
+            copilot = {'hook_event_name': event, 'session_id': 's', 'cwd': '/p', 'timestamp': '2026-10-27T12:00:00Z'}
+            self.assertTrue(hook.foreign_call('claude', copilot), event)
+            self.assertTrue(hook.foreign_call('claude', {**copilot, 'transcript_path': '/t'}), event)
+        self.assertFalse(hook.foreign_call('codex', {'hook_event_name': 'Stop'}), 'only Claude hook files are shared')
+
+    def test_hook_context_says_turns_are_saved(self):
+        text = context(hook.run('claude', payload(self.project, 'SessionStart')))
+        self.assertIn(hook.SAVED_BY_HOOK.strip(), text)
 
     def test_empty_reply_keeps_previous_checkpoint(self):
         hook.run('codex', payload(self.project, 'Stop', last_assistant_message='First'))
@@ -373,7 +427,7 @@ class MemoryTiersTest(unittest.TestCase):
     def test_parallel_hooks_keep_every_conversation(self):
         script = ('import sys; sys.path.insert(0, sys.argv[1]); from baton import hook; '
                   'hook.run("claude", {"cwd": sys.argv[2], "hook_event_name": "UserPromptSubmit", '
-                  '"session_id": "p" + sys.argv[3], "prompt": "go"})')
+                  '"session_id": "p" + sys.argv[3], "prompt": "go", "transcript_path": ""})')
         procs = [subprocess.Popen([sys.executable, '-c', script, str(ROOT), str(self.project), str(i)]) for i in range(8)]
         for proc in procs:
             self.assertEqual(proc.wait(60), 0)

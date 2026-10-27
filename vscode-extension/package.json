@@ -2,7 +2,7 @@
   "name": "ai-baton",
   "displayName": "AI Baton: Claude Code & Codex memory, handoff, review",
   "description": "Shared memory and handoffs between Claude Code and OpenAI Codex: one agent picks up where the other stopped, reviews its work, and you see usage and plan limits. VS Code, Cursor, Windsurf (Open VSX).",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "preview": true,
   "publisher": "wwijatkowski",
   "license": "SEE LICENSE IN LICENSE",
@@ -38,6 +38,9 @@
   "scripts": { "vscode:prepublish": "sh ../scripts/bundle-cli.sh" },
   "activationEvents": ["onStartupFinished"],
   "contributes": {
+    "mcpServerDefinitionProviders": [
+      { "id": "aiBaton.memory", "label": "AI Baton memory" }
+    ],
     "viewsContainers": {
       "activitybar": [
         { "id": "aiBaton", "title": "AI Baton", "icon": "media/baton.svg" }
@@ -75,6 +78,12 @@
           "type": "string",
           "default": "",
           "description": "Leave empty to use the CLI that comes with the extension (installed to ~/.ai-baton). Set a folder, e.g. ~/ai-baton, to use a development checkout."
+        },
+        "aiBaton.memoryTools": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "markdownDescription": "The agent that gets AI Baton's memory tools (its MCP server) in VS Code's chat, e.g. `copilot`; empty: off. Set by **Connect memory** and **Disconnect** on the agent's card."
         },
         "aiBaton.python": {
           "type": "string",

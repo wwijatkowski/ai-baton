@@ -127,7 +127,23 @@
       fix && h('button', { onclick: () => send(fix[0], { agent: agent.id }) }, fix[1]));
   }
 
-  function agents(st, models, hooks) {
+  // Agents without hooks whose chat uses VS Code's MCP servers (Copilot): AI Baton's memory tools, called by the agent.
+  function mcpNote(agent, mcp) {
+    if (!mcp || !mcp.agents.includes(agent.id)) return null;
+    if (mcp.connected === agent.id) {
+      const text = mcp.available ? 'Memory tools on: it decides when to call them (agent mode).'
+        : 'Memory tools on, but unavailable until AI Baton works again (see above).';
+      return h('div', { class: 'small muted row' }, h('span', null, text),
+        h('button', { class: 'link', onclick: () => send('disconnectMemory', { agent: agent.id }),
+          title: 'Stop offering AI Baton\'s MCP server to this agent' }, 'Disconnect'));
+    }
+    return h('div', { class: 'warning small' }, h('span', null, 'No memory hooks, so this agent does not share memory yet.'),
+      h('button', { onclick: () => send('connectMemory', { agent: agent.id }),
+        title: 'Give this agent AI Baton\'s memory tools (an MCP server run by this extension), in every workspace' },
+      'Connect memory'));
+  }
+
+  function agents(st, models, hooks, mcp) {
     if (!st || !st.agents) return null;
     return h('div', null,
       h('h2', null, 'Agents'),
@@ -144,6 +160,7 @@
             cp ? `Checkpoint ${ago(cp.saved_at)}${cp.branch ? ' · ' + cp.branch : ''}${cp.commit ? ' @ ' + cp.commit.slice(0, 7) : ''}` : 'No checkpoint'),
           cp && cp.summary && h('p', { class: 'summary', title: plain(cp.summary) }, plain(cp.summary)),
           st.initialized && hookWarning(a, hooks && hooks[a.id]),
+          st.initialized && mcpNote(a, mcp),
           modelPicker(a.id, models),
           h('div', { class: 'row' },
             h('button', { class: 'primary', onclick: () => send('open', { agent: a.id }) }, 'Open'),
@@ -334,7 +351,7 @@
     app.replaceChildren(...[
       header(state.status, root),
       state.error && h('p', { class: 'error' }, state.error),
-      agents(state.status, state.models, state.hooks),
+      agents(state.status, state.models, state.hooks, state.mcp),
       recent(state.status),
       docs(state.status),
       usage(state),

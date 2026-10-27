@@ -26,7 +26,7 @@ async function main() {
   baton(['init', project, '--agents=']);  // No project hooks: the user-level ones the suite installs must do the work.
   // A finished Claude turn, as its Stop hook reports it: the panel must show this checkpoint.
   baton(['hook', 'claude'], JSON.stringify({
-    cwd: project, hook_event_name: 'Stop', session_id: 'vscode-test', last_assistant_message: 'Set up the démo for the test.',
+    cwd: project, hook_event_name: 'Stop', session_id: 'vscode-test', transcript_path: '', last_assistant_message: 'Set up the démo for the test.',
   }));
   try {
     await runTests({

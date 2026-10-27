@@ -27,6 +27,9 @@ ARCHIVE = 'history.archive.jsonl.gz'
 # Per-user additions (e.g. a new model extension) live outside the repo.
 USER_AGENTS = Path.home() / '.config' / 'ai-baton' / 'agents.json'
 AGENT_KEYS = ('id', 'label', 'extension', 'openCommand', 'newCommand')
+AGENT_ID_RE = re.compile(r'[a-z0-9][a-z0-9-]{0,39}')
+# Files in .agent-memory/ next to the checkpoints (<agent>.json): no agent may be called this.
+RESERVED_IDS = {'activity', 'seen'}
 
 
 class AgentError(Exception):
@@ -139,13 +142,17 @@ def add_agent(agent):
         write_json(USER_AGENTS, registry)
         return builtin
     agent = {k: agent[k].strip() for k in AGENT_KEYS if isinstance(agent.get(k), str) and agent[k].strip()}
-    if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,39}', agent.get('id', '')):
-        raise AgentError('id must be lowercase letters, digits and dashes')
+    if not valid_agent_id(agent.get('id', '')):
+        raise AgentError('id must be lowercase letters, digits and dashes (not activity or seen)')
     if 'label' not in agent or 'openCommand' not in agent:
         raise AgentError('label and openCommand are required')
     registry['agents'] = [a for a in registry['agents'] if a.get('id') != agent['id']] + [agent]
     write_json(USER_AGENTS, registry)
     return agent
+
+
+def valid_agent_id(agent_id):
+    return isinstance(agent_id, str) and bool(AGENT_ID_RE.fullmatch(agent_id)) and agent_id not in RESERVED_IDS
 
 
 def remove_agent(agent_id):
