@@ -34,6 +34,8 @@ RESERVED_IDS = {'activity', 'seen', 'reviews'}
 # only): keyed by the agent id and its extension, which must both match.
 INTEGRATIONS = {('copilot', 'github.copilot-chat'): {'hooks': 'copilot'}}
 
+WINDOWS = os.name == 'nt'
+
 
 class AgentError(Exception):
     pass
@@ -323,12 +325,13 @@ def file_lock(path, timeout=3):
                 msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
 
 
-def write_json(path, data, private=False):
-    write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + '\n', private)
+def write_json(path, data, private=False, deadline=None):
+    write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + '\n', private, deadline)
 
 
-def write_text(path, text, private=False):
-    """Atomic write so a reader never sees half a file; an existing file keeps its mode and symlink."""
+def write_text(path, text, private=False, deadline=None):
+    """Atomic write so a reader never sees half a file; an existing file keeps its mode and symlink. Past `deadline`
+    (monotonic) a refused replace is not tried again."""
     path = Path(path)
     if path.is_symlink():
         path = path.resolve()
@@ -347,7 +350,7 @@ def write_text(path, text, private=False):
                 os.replace(temp, path)
                 break
             except PermissionError:
-                if os.name != 'nt' or attempt == 19:
+                if not WINDOWS or attempt == 19 or (deadline is not None and time.monotonic() >= deadline):
                     raise
                 time.sleep(0.05)
     finally:

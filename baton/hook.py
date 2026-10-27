@@ -45,6 +45,7 @@ MAX_RECEIPTS = 500
 # Copilot runs Stop before its last events reach the file (seen live: the final answer lands milliseconds later), so
 # Stop waits this long for a reply it has not saved yet.
 COPILOT_REPLY_WAIT = 2.0
+COPILOT_PERSIST_RESERVE = 1.5  # Seconds of the Stop budget kept for writing, after the change capture.
 # The whole Copilot Stop (wait, lock, change capture) ends by then, inside the hook's 10 s: git is skipped after it.
 COPILOT_STOP_BUDGET = 7.0
 HANDOFF_DOC = 'docs/AGENT_HANDOFF.md'
@@ -172,7 +173,7 @@ def set_activity(mem, agent, state, session_id, transcript=None, unless_after=No
         sessions = {sid: e for i, (sid, e) in enumerate(newest) if i < MAX_SESSIONS or marked_working(e)}
         # Only recorded states here: transcripts are checked by readers, outside the lock.
         activity[agent] = {**agent_activity({'sessions': sessions}, marked_working), 'sessions': sessions}
-        write_json(path, activity, private=True)
+        write_json(path, activity, private=True, deadline=deadline)
 
 
 def append_history(mem, snapshot, deadline=None):
@@ -190,7 +191,7 @@ def append_history(mem, snapshot, deadline=None):
             with gzip.open(archive, 'at', encoding='utf-8') as stream:
                 stream.write('\n'.join(overflow) + '\n')
             os.chmod(archive, 0o600)
-        write_text(history, '\n'.join(lines) + '\n', private=True)
+        write_text(history, '\n'.join(lines) + '\n', private=True, deadline=deadline)
 
 
 def save_checkpoint(mem, root, agent, payload, turn_start=None, summary=None, client=None, extra=None, deadline=None,
@@ -225,7 +226,7 @@ def save_checkpoint(mem, root, agent, payload, turn_start=None, summary=None, cl
     }
     if found['kind'] == 'git':
         snapshot.update(branch=found['branch'], commit=found['commit'])
-    write_json(mem / (agent + '.json'), snapshot, private=True)
+    write_json(mem / (agent + '.json'), snapshot, private=True, deadline=deadline)
     append_history(mem, snapshot, deadline)
     return snapshot
 
@@ -426,24 +427,46 @@ def run_copilot(mem, root, event, session_id, payload):
         wait_for_copilot_reply(mem, transcript, session_id)
         found = copilot_reply(transcript, session_id)
         if found and copilot_saved(mem, session_id) != found['message_id']:
-            # The slow part (git, snapshots) before the lock, so Stops of parallel chats do not queue behind it.
-            saved_at = now_iso()
-            captured = capture_changes(mem, root, 'copilot', saved_at, deadline)
-            # Locked, the transcript read again inside: a Stop that is late or seen twice finds the newest reply
-            # already saved. Receipts per conversation live apart from activity.json, which forgets older ones.
-            with file_lock(mem / '.copilot-stop.lock', timeout=lock_time(deadline)):
-                found = copilot_reply(transcript, session_id)
-                if found and copilot_saved(mem, session_id) != found['message_id']:
-                    save_checkpoint(mem, root, 'copilot', {'session_id': session_id, 'last_assistant_message': found['reply']},
-                                    client=found['client'], extra={'message_id': found['message_id']}, deadline=deadline,
-                                    found=captured)
-                    receipts = copilot_receipts(mem)
-                    receipts.pop(str(session_id or ''), None)
-                    receipts[str(session_id or '')] = found['message_id']
-                    write_json(mem / COPILOT_RECEIPTS, dict(list(receipts.items())[-MAX_RECEIPTS:]), private=True)
+            save_copilot_reply(mem, root, transcript, session_id, deadline)
         # A late Stop must not end a turn that started after it fired.
         set_activity(mem, 'copilot', 'idle', session_id, hook=True, unless_after=payload.get('timestamp'), deadline=deadline)
     return {}
+
+
+def save_copilot_reply(mem, root, transcript, session_id, deadline):
+    """Claim the newest reply (its receipt) under the lock, so a repeated or late Stop finds it taken; capture the
+    changes outside it, so Stops of parallel chats do not queue behind git; save under the lock unless a newer reply
+    of this chat was claimed meanwhile. A failed save gives the claim back."""
+    lock = mem / '.copilot-stop.lock'
+    with file_lock(lock, timeout=lock_time(deadline)):
+        found = copilot_reply(transcript, session_id)
+        previous = copilot_saved(mem, session_id)
+        if not found or previous == found['message_id']:
+            return
+        set_receipt(mem, session_id, found['message_id'], deadline)
+    try:
+        captured = capture_changes(mem, root, 'copilot', now_iso(), deadline - COPILOT_PERSIST_RESERVE)
+        with file_lock(lock, timeout=lock_time(deadline)):
+            if copilot_saved(mem, session_id) == found['message_id']:
+                save_checkpoint(mem, root, 'copilot', {'session_id': session_id, 'last_assistant_message': found['reply']},
+                                client=found['client'], extra={'message_id': found['message_id']}, deadline=deadline,
+                                found=captured)
+    except BaseException:
+        try:
+            with file_lock(lock, timeout=0.5):
+                if copilot_saved(mem, session_id) == found['message_id']:
+                    set_receipt(mem, session_id, previous, deadline)
+        except Exception:  # noqa: BLE001 (the first error is the one reported)
+            pass
+        raise
+
+
+def set_receipt(mem, session_id, message_id, deadline=None):
+    receipts = copilot_receipts(mem)
+    receipts.pop(str(session_id or ''), None)
+    if message_id is not None:
+        receipts[str(session_id or '')] = message_id
+    write_json(mem / COPILOT_RECEIPTS, dict(list(receipts.items())[-MAX_RECEIPTS:]), private=True, deadline=deadline)
 
 
 def copilot_receipts(mem):
