@@ -1029,6 +1029,29 @@ class ReviewTest(unittest.TestCase):
     def fake(self, name, code):
         self.tools[name] = fake_tool(self.bin, name, code)
 
+    def test_a_running_review_shows_as_reviewing_and_leaves_memory_alone(self):
+        # The stand-in reviewer reports what the panel would see while it runs.
+        self.fake('claude', "import json, sys\nsys.path.insert(0, " + repr(str(ROOT)) + ")\nfrom baton import status\n"
+                            "agents = status.project_status('.')['agents']\n"
+                            "print('during: ' + json.dumps({a['id']: a['reviewing'] for a in agents}))\n")
+        (self.project / 'NEW.md').write_text('x\n')
+        mem = self.project / '.agent-memory'
+        before = {f.name: f.read_bytes() for f in mem.iterdir() if f.is_file() and f.name not in ('reviews.json', '.reviews.lock')}
+        text = review.review(self.project, 'claude', 'goal', model='sonnet')['review']
+        during = json.loads(text.split('during: ', 1)[1].splitlines()[0])
+        self.assertEqual((during['claude']['model'], during['codex']), ('sonnet', None))
+        self.assertEqual({a['id']: a['reviewing'] for a in status.project_status(self.project)['agents']},
+                         {'claude': None, 'codex': None})
+        after = {f.name: f.read_bytes() for f in mem.iterdir() if f.is_file() and f.name not in ('reviews.json', '.reviews.lock')}
+        self.assertEqual(after, before)  # No checkpoint, activity or history from a review.
+        # A review that died (its process gone, or far too old) does not show.
+        project.write_json(mem / 'reviews.json', {
+            'a': {'agent': 'codex', 'model': '', 'effort': '', 'started': project.now_iso(), 'pid': 999999},
+            'b': {'agent': 'claude', 'model': '', 'effort': '', 'started': '2020-01-01T00:00:00+00:00', 'pid': os.getpid()},
+            'c': 'damaged'})
+        self.assertEqual(project.running_reviews(mem), {} if not WINDOWS else {'codex': {'model': '', 'effort': '',
+                         'started': read_json(mem / 'reviews.json')['a']['started']}})
+
     def test_reviews_uncommitted_changes_including_new_files(self):
         (self.project / 'NEW.md').write_text('brand new line\n')
         result = review.review(self.project, 'codex', 'add a note')

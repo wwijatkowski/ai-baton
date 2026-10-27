@@ -122,6 +122,13 @@ panel.send({ type: 'state', state: { ...state, mcp: { agents: ['copilot'], conne
 if (!button(panel.app, 'Disconnect') || button(panel.app, 'Connect memory')) failures.push('panel: connected Copilot not shown as connected');
 panel.send({ type: 'state', state: { ...state, mcp: { agents: ['copilot'], connected: 'copilot', available: false } }, root: '/p' });
 if (!panel.app.textContent.includes('unavailable until AI Baton works again')) failures.push('panel: unavailable memory tools not explained');
+// A review running now: its own badge, never mistaken for work.
+panel.send({ type: 'state', state: { ...state, status: { ...state.status, agents: state.status.agents.map((a) => (a.id === 'claude'
+  ? { ...a, activity: null, reviewing: { model: 'sonnet', effort: 'high', started: iso(1) } } : a)) } }, root: '/p' });
+check('panel, reviewing', panel.app);
+const reviewing = panel.app.all().find((e) => e.className === 'badge reviewing');
+if (!reviewing || !/Reviewing \(read-only\), started .* · sonnet · high/.test(reviewing.attrs.title || '')) failures.push(`panel: no reviewing badge with its model (${reviewing && reviewing.attrs.title})`);
+if (panel.app.all().some((e) => e.className === 'badge last')) failures.push('panel: "last" shown next to "reviewing"');
 // Copilot with its own hooks: hooks and memory tools in all four combinations.
 const withCopilotHooks = (hookState, connected) => ({ ...state,
   status: { ...state.status, agents: state.status.agents.map((a) => (a.id === 'copilot' ? { ...a, hooks: 'copilot' } : a)) },

@@ -72,6 +72,7 @@ button.link:hover { color: var(--vscode-foreground); background: none; text-deco
 .badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--border); color: var(--muted); }
 .badge.working { color: var(--ok); border-color: var(--ok); }
 .badge.last { color: var(--vscode-foreground); }
+.badge.reviewing { color: var(--vscode-charts-purple, var(--vscode-foreground)); border-color: var(--vscode-charts-purple, var(--border)); }
 .model { margin: 2px 0 6px; flex-wrap: nowrap; }
 select {
   font: inherit;

@@ -29,7 +29,7 @@ USER_AGENTS = Path.home() / '.config' / 'ai-baton' / 'agents.json'
 AGENT_KEYS = ('id', 'label', 'extension', 'openCommand', 'newCommand')
 AGENT_ID_RE = re.compile(r'[a-z0-9][a-z0-9-]{0,39}')
 # Files in .agent-memory/ next to the checkpoints (<agent>.json): no agent may be called this.
-RESERVED_IDS = {'activity', 'seen'}
+RESERVED_IDS = {'activity', 'seen', 'reviews'}
 # Integrations a user-added agent gets from AI Baton itself, never from its own entry (add_agent keeps launch settings
 # only): keyed by the agent id and its extension, which must both match.
 INTEGRATIONS = {('copilot', 'github.copilot-chat'): {'hooks': 'copilot'}}
@@ -360,3 +360,61 @@ def memory_dir(root):
     path.mkdir(mode=0o700, exist_ok=True)
     os.chmod(path, 0o700)
     return path
+
+
+# Reviews running now (`baton review`): .agent-memory/reviews.json, {token: {agent, model, effort, started, pid}}.
+# Only for the panel's "reviewing" badge: a review is not project work, so it never touches checkpoints or activity.
+REVIEWS = 'reviews.json'
+MAX_REVIEW_HOURS = 2  # An entry older than this is a review that died without cleaning up.
+
+
+def process_alive(pid):
+    if os.name == 'nt':
+        return True  # os.kill(pid, 0) would end the process on Windows; the age limit covers dead ones there.
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError):
+        return True
+    return True
+
+
+def start_review(root, agent, model='', effort=''):
+    """Mark a review as running; returns the token for end_review."""
+    mem = memory_dir(root)
+    token = f'{os.getpid()}-{time.time_ns()}'
+    with file_lock(mem / '.reviews.lock'):
+        running = read_json(mem / REVIEWS, {}) or {}
+        running = running if isinstance(running, dict) else {}
+        running[token] = {'agent': agent, 'model': model or '', 'effort': effort or '', 'started': now_iso(),
+                          'pid': os.getpid()}
+        write_json(mem / REVIEWS, running, private=True)
+    return token
+
+
+def end_review(root, token):
+    mem = memory_dir(root)
+    with file_lock(mem / '.reviews.lock'):
+        running = read_json(mem / REVIEWS, {}) or {}
+        if isinstance(running, dict) and running.pop(token, None) is not None:
+            write_json(mem / REVIEWS, running, private=True)
+
+
+def running_reviews(mem):
+    """{agent: the newest running review} for reviews whose process is alive and not older than MAX_REVIEW_HOURS."""
+    running = read_json(Path(mem) / REVIEWS, {}) or {}
+    found = {}
+    for entry in (running.values() if isinstance(running, dict) else []):
+        if not isinstance(entry, dict) or not isinstance(entry.get('agent'), str):
+            continue
+        try:
+            started = datetime.fromisoformat(entry['started'])
+            pid = int(entry['pid'])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if datetime.now(timezone.utc) - started > timedelta(hours=MAX_REVIEW_HOURS) or not process_alive(pid):
+            continue
+        if entry['agent'] not in found or entry['started'] > found[entry['agent']]['started']:
+            found[entry['agent']] = {k: entry.get(k) for k in ('model', 'effort', 'started')}
+    return found

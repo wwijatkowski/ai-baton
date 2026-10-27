@@ -25,7 +25,8 @@ from pathlib import Path
 
 from . import changes, models
 from .changes import BASELINE_REF, SHADOW_CONFIG, SHADOW_DIR
-from .project import MEMORY_DIR, agent_binary, find_root, kill_tree, load_agents, read_json, write_text
+from .project import MEMORY_DIR, agent_binary, end_review, find_root, kill_tree, load_agents, read_json, start_review, \
+    write_text
 from .recall import entries
 
 MAX_DIFF = 200_000
@@ -426,9 +427,14 @@ def author_context(project, session=None):
 def review(start, agent, goal=None, commit=None, focus=None, session=None, model=None, effort=None):
     # A cancel at any stage (collecting the diff or reviewing) stops whatever is running, then exits.
     previous = {sig: signal.signal(sig, cancel) for sig in (signal.SIGTERM, signal.SIGINT)}
+    # The panel shows a "reviewing" badge meanwhile; nothing else in the project's memory changes.
+    root = find_root(start)
+    token = start_review(root, agent, model, effort) if root else None
     try:
         return reviewed(start, agent, goal, commit, focus, session, model, effort)
     finally:
+        if token:
+            end_review(root, token)
         for sig, handler in previous.items():
             signal.signal(sig, handler)
 

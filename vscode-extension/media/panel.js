@@ -173,7 +173,10 @@
             h('span', { class: 'dot', style: { background: color(a.id, i) } }),
             h('span', { class: 'name' }, a.label),
             working && h('span', { class: 'badge working' }, 'working'),
-            !working && st.last_agent === a.id && h('span', { class: 'badge last' }, 'last')),
+            // A review (read-only, saves nothing to the project's memory) by this agent is running now.
+            a.reviewing && h('span', { class: 'badge reviewing', title: `Reviewing (read-only), started ${ago(a.reviewing.started)}` +
+              ([a.reviewing.model, a.reviewing.effort].filter(Boolean).length ? ` · ${[a.reviewing.model, a.reviewing.effort].filter(Boolean).join(' · ')}` : '') }, 'reviewing'),
+            !working && !a.reviewing && st.last_agent === a.id && h('span', { class: 'badge last' }, 'last')),
           st.initialized && h('div', { class: 'small muted' },
             cp ? `Checkpoint ${ago(cp.saved_at)}${cp.branch ? ' · ' + cp.branch : ''}${cp.commit ? ' @ ' + cp.commit.slice(0, 7) : ''}` : 'No checkpoint'),
           cp && cp.summary && h('p', { class: 'summary', title: plain(cp.summary) }, plain(cp.summary)),
