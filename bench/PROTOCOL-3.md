@@ -27,7 +27,8 @@ is kept (code, tests, docs) and frozen as one commit "Work in progress" on top o
 is kept and used as it is (no reruns to get a better handoff); an A run that crashes (no reply) is rerun once, noted.
 
 ## Agent B (16 runs: one per frozen state and arm)
-Claude Code (sonnet, medium; tools and isolation as before); prompt "Continue the work from the previous conversation."
+Claude Code (sonnet, medium; tools and isolation as before); prompt "Part 1 of the feature from our previous
+conversation is done. Please do part 2 now and finish it." (see the changes at the end).
 - plain A's states: `none` (the prompt only: no transferred context, no user follow-up; a diagnostic),
   `paste` (+ "The previous agent's last message:" and plain A's final reply verbatim),
   `respec` (+ "The original request:" and the spec verbatim);
@@ -48,5 +49,10 @@ not used to select runs.
 - The base repos still held pilot 2's ISSUE.md (another feature's spec); it is removed before A runs, so the only
   specification is A's first message.
 
-## Changes after the first A run
-(none yet)
+## Changes after the first B run
+- 2026-10-28, after 4 B runs (report 1-plain paste and respec, 2-plain paste and respec; kept in
+  `results/20261028T141433Z-pilot3-discarded/`): the prompt "Continue the work from the previous conversation." made B
+  check part 1, find it done and stop (2-3 tool calls, no changes), also when the full spec was pasted, whose wording
+  ("Part 1 (please do this now)") is addressed to A. That measured the prompt's ambiguity, not the transfer of context.
+  New prompt for every arm: "Part 1 of the feature from our previous conversation is done. Please do part 2 now and
+  finish it." All 16 B runs are run again with it; the frozen A runs are unchanged.
