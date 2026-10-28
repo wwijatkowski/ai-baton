@@ -6,6 +6,9 @@ Pilot 1 (bench/PROTOCOL.md): shelf, textstats; a handoff file vs AI Baton.
 Pilot 2 (bench/PROTOCOL-2.md): habits, pricing; a missing or stale handoff; nothing / pasted reply / AI Baton.
     python3 bench/run.py prepare2 <task>       agent A once; frozen into bench/frozen2/<task>/
     python3 bench/run.py pilot2 [--seed N]     the 12 B runs
+Pilot 3 (bench/PROTOCOL-3.md): report, bundles; the spec only in A's first message; plain vs AI Baton workflow.
+    python3 bench/run.py prepare3 <task>       2 pairs of A runs (plain, baton); frozen into bench/frozen3/<task>/
+    python3 bench/run.py pilot3 [--seed N]     the 16 B runs
 Both:
     python3 bench/run.py check <task>          the hidden tests against the reference solution (no agents)
 
@@ -34,6 +37,9 @@ import metrics  # noqa: E402  (bench/metrics.py)
 BATON = ROOT / 'bin' / 'baton'
 TASKS = ('shelf', 'textstats')
 TASKS2 = ('habits', 'pricing')
+TASKS3 = {'report': 'habits', 'bundles': 'pricing'}  # task -> base repo
+PAIRS3 = 2
+PROMPT_B3 = 'Continue the work from the previous conversation.'
 CONDITIONS = ('missing', 'stale')
 ARMS2 = ('none', 'paste', 'baton')
 ARMS = ('file', 'baton')
@@ -101,9 +107,13 @@ def tests_pass(cwd, hidden=None):
 
 
 def check(task):
-    reference = BENCH / 'tasks' / task / 'reference'
-    print(task, 'reference:', tests_pass(reference, BENCH / 'tasks' / task / 'hidden'))
-    print(task, 'base repo:', tests_pass(BENCH / 'tasks' / task / 'repo', BENCH / 'tasks' / task / 'hidden'))
+    if task in TASKS3:
+        source, base = BENCH / 'tasks3' / task, BENCH / 'tasks' / TASKS3[task] / 'repo'
+    else:
+        source = BENCH / 'tasks' / task
+        base = source / 'repo'
+    print(task, 'reference:', tests_pass(source / 'reference', source / 'hidden'))
+    print(task, 'base repo:', tests_pass(base, source / 'hidden'))
 
 
 def prepare(task):
@@ -195,7 +205,7 @@ def setup_arm(work, task, arm):
     git(work, 'commit', '-q', '-m', 'Workspace')
 
 
-def run_b(task, arm, out, setup=None, prompt=PROMPT_B, label=None):
+def run_b(task, arm, out, setup=None, prompt=PROMPT_B, label=None, hidden=None):
     label = label or f'{task}-{arm}'
     work = workdir(f'B-{label}')
     shutil.rmtree(work)
@@ -211,7 +221,7 @@ def run_b(task, arm, out, setup=None, prompt=PROMPT_B, label=None):
     except subprocess.TimeoutExpired as error:
         cli, exit_code, timed_out = error.stdout or '', None, True
     seconds = round(time.time() - started)
-    repo_ok, hidden_ok = tests_pass(work, BENCH / 'tasks' / task / 'hidden')
+    repo_ok, hidden_ok = tests_pass(work, hidden or BENCH / 'tasks' / task / 'hidden')
     transcripts = Path.home() / '.claude' / 'projects'
     found = [p for p in transcripts.glob(f'*/{session}.jsonl')]
     summary = None
@@ -412,9 +422,128 @@ def pilot2(seed):
     print(f'results: {out}')
 
 
+# ---------- pilot 3 ----------
+
+def prepare3(task, seed):
+    """PAIRS3 independent pairs of A runs (plain, baton), order randomized in each pair; everything A writes is kept."""
+    frozen = BENCH / 'frozen3' / task
+    if frozen.exists():
+        sys.exit(f'{frozen} exists: frozen A runs are never replaced once B runs used them (see PROTOCOL-3.md)')
+    base = BENCH / 'tasks' / TASKS3[task]
+    spec = (BENCH / 'tasks3' / task / 'spec.md').read_text()
+    prompt = spec.rstrip() + '\n\nPlease do part 1 now; part 2 will be done later in another conversation.'
+    rng = random.Random(f'{seed}-{task}')
+    for pair in range(1, PAIRS3 + 1):
+        kinds = ['plain', 'baton']
+        rng.shuffle(kinds)
+        for kind in kinds:
+            work = workdir(f'A-{task}-{pair}-{kind}')
+            shutil.copytree(base / 'repo', work, dirs_exist_ok=True)
+            (work / 'AGENTS.md').write_text((base / 'agents.md').read_text())
+            git(work, 'init', '-q', '-b', 'main')
+            git(work, 'add', '-A')
+            git(work, 'commit', '-q', '-m', 'Project')
+            if kind == 'baton':
+                subprocess.run([sys.executable, str(BATON), 'init', str(work)], check=True, stdout=subprocess.DEVNULL)
+                git(work, 'add', '-A')
+                git(work, 'commit', '-q', '-m', 'Set up AI Baton')
+            reply_file = workdir(f'A-reply-{task}-{pair}-{kind}') / 'reply.txt'
+            started = time.time()
+            proc = None
+            for attempt in (1, 2):  # A crash (no reply) is rerun once; a poor result is never rerun.
+                proc = subprocess.run([agent_binary('codex'), 'exec', '--sandbox', 'workspace-write', '-m', A_MODEL,
+                                       '-c', f'model_reasoning_effort={A_EFFORT}', '-o', str(reply_file), prompt],
+                                      cwd=work, capture_output=True, text=True, timeout=B_TIMEOUT)
+                if reply_file.exists() and reply_file.read_text().strip():
+                    break
+                print(f'A {task} {pair} {kind}: no reply (exit {proc.returncode}), attempt {attempt}')
+            reply = reply_file.read_text() if reply_file.exists() else ''
+            shutil.rmtree(reply_file.parent, ignore_errors=True)
+            rollout = newest_codex_rollout(work, started)
+            repo_ok, _ = tests_pass(work)
+            git(work, 'add', '-A')
+            subprocess.run(GIT + ['commit', '-q', '-m', 'Work in progress'], cwd=work, capture_output=True)
+            state = frozen / f'{pair}-{kind}'
+            state.mkdir(parents=True)
+            subprocess.run(['git', 'bundle', 'create', str(state / 'repo.bundle'), 'main'], cwd=work, check=True,
+                           capture_output=True)
+            if (work / '.agent-memory').exists():
+                with tarfile.open(state / 'agent-memory.tar.gz', 'w:gz') as tar:
+                    tar.add(work / '.agent-memory', arcname='.agent-memory')
+            summary = None
+            if rollout:
+                s = metrics.Summary('codex')
+                metrics.parse_codex(s, rollout)
+                summary = s.result(None)
+                shutil.copy(rollout, state / 'a-transcript.jsonl')
+            (state / 'a.json').write_text(json.dumps({
+                'model': A_MODEL, 'effort': A_EFFORT, 'kind': kind, 'pair': pair, 'exit': proc.returncode,
+                'repo_tests': repo_ok, 'seconds': round(time.time() - started), 'summary': summary,
+                'final_reply': reply, 'at': datetime.now(timezone.utc).isoformat()}, indent=2) + '\n')
+            shutil.rmtree(work)
+            print(f'A {task} pair {pair} {kind}: exit {proc.returncode}, repo tests {"pass" if repo_ok else "FAIL"}, '
+                  f'reply {len(reply)} chars', flush=True)
+
+
+def setup_arm3(work, task, state, arm):
+    subprocess.run(['git', 'clone', '-q', '-b', 'main', str(state / 'repo.bundle'), str(work)], check=True,
+                   capture_output=True)
+    if arm == 'baton':
+        with tarfile.open(state / 'agent-memory.tar.gz') as tar:
+            tar.extractall(work, filter='data') if hasattr(tarfile, 'data_filter') else tar.extractall(work)
+        empty = Path(tempfile.mkdtemp(prefix='baton-bench-home-', dir='/tmp'))
+        try:
+            subprocess.run([sys.executable, str(BATON), 'init', str(work), '--agents=claude'], check=True,
+                           env={**os.environ, 'HOME': str(empty)}, stdout=subprocess.DEVNULL)
+        finally:
+            shutil.rmtree(empty, ignore_errors=True)
+        if not (work / '.claude' / 'settings.json').exists():
+            raise RuntimeError('no project hooks written for the baton arm')
+    elif not (work / 'CLAUDE.md').exists():
+        (work / 'CLAUDE.md').write_text('@AGENTS.md\n')  # How Claude Code reads AGENTS.md.
+    git(work, 'add', '-A')
+    subprocess.run(GIT + ['commit', '-q', '-m', 'Workspace'], cwd=work, capture_output=True)
+
+
+def pilot3(seed):
+    rng = random.Random(seed)
+    plan = []
+    for task in TASKS3:
+        states = sorted((BENCH / 'frozen3' / task).glob('*-*'))
+        if len(states) != 2 * PAIRS3:
+            sys.exit(f'{task}: {len(states)} frozen A states, expected {2 * PAIRS3}: python3 bench/run.py prepare3 {task}')
+        cells = []
+        for state in states:
+            arms = ('baton',) if state.name.endswith('-baton') else ('none', 'paste', 'respec')
+            cells += [(task, state.name, arm) for arm in arms]
+        rng.shuffle(cells)
+        plan += cells
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    out = BENCH / 'results' / f'{stamp}-pilot3'
+    out.mkdir(parents=True)
+    (out / 'plan.json').write_text(json.dumps({'seed': seed, 'model': B_MODEL, 'effort': B_EFFORT, 'prompt': PROMPT_B3,
+                                               'tools': B_TOOLS, 'versions': versions(), 'plan': plan}, indent=2) + '\n')
+    for i, (task, state_name, arm) in enumerate(plan, 1):
+        state = BENCH / 'frozen3' / task / state_name
+        print(f'[{i}/{len(plan)}] {task} {state_name} {arm}', flush=True)
+        prompt = PROMPT_B3
+        if arm == 'paste':
+            prompt += "\n\nThe previous agent's last message:\n\n" + json.loads((state / 'a.json').read_text())['final_reply']
+        elif arm == 'respec':
+            prompt += '\n\nThe original request:\n\n' + (BENCH / 'tasks3' / task / 'spec.md').read_text()
+        row = {'order': i, 'state': state_name, **run_b(
+            task, arm, out, setup=lambda w, t, a, st=state: setup_arm3(w, t, st, a), prompt=prompt,
+            label=f'{task}-{state_name}-{arm}', hidden=BENCH / 'tasks3' / task / 'hidden')}
+        with open(out / 'runs.jsonl', 'a', encoding='utf-8') as stream:
+            stream.write(json.dumps(row) + '\n')
+        usage = (row['summary'] or {}).get('usage') or {}
+        print(f'    success={row["success"]} tokens={metrics.tokens(usage) if usage else "?"} seconds={row["seconds"]}', flush=True)
+    print(f'results: {out}')
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=('prepare', 'pilot', 'check', 'prepare2', 'pilot2'))
+    parser.add_argument('command', choices=('prepare', 'pilot', 'check', 'prepare2', 'pilot2', 'prepare3', 'pilot3'))
     parser.add_argument('task', nargs='?')
     parser.add_argument('--seed', type=int, default=20261028)
     args = parser.parse_args()
@@ -422,8 +551,14 @@ def main():
         pilot(args.seed)
     elif args.command == 'pilot2':
         pilot2(args.seed)
-    elif args.task not in TASKS + TASKS2:
-        sys.exit(f'task: one of {", ".join(TASKS + TASKS2)}')
+    elif args.command == 'pilot3':
+        pilot3(args.seed)
+    elif args.command == 'prepare3':
+        if args.task not in TASKS3:
+            sys.exit(f'task: one of {", ".join(TASKS3)}')
+        prepare3(args.task, args.seed)
+    elif args.task not in TASKS + TASKS2 + tuple(TASKS3):
+        sys.exit(f'task: one of {", ".join(TASKS + TASKS2 + tuple(TASKS3))}')
     else:
         {'prepare': prepare, 'check': check, 'prepare2': prepare2}[args.command](args.task)
 
