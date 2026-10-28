@@ -133,7 +133,7 @@ def prepare(task):
     started = time.time()
     proc = subprocess.run([agent_binary('codex'), 'exec', '--sandbox', 'workspace-write', '-m', A_MODEL,
                            '-c', f'model_reasoning_effort={A_EFFORT}', PROMPT_A], cwd=work, capture_output=True,
-                          text=True, timeout=B_TIMEOUT)
+                          text=True, timeout=B_TIMEOUT, stdin=subprocess.DEVNULL)
     rollout = newest_codex_rollout(work, started)
     repo_ok, _ = tests_pass(work)
     print(f'A finished: exit {proc.returncode}, repo tests {"pass" if repo_ok else "FAIL"}, rollout {rollout}')
@@ -216,7 +216,7 @@ def run_b(task, arm, out, setup=None, prompt=PROMPT_B, label=None, hidden=None):
             '--setting-sources', 'project,local', '--permission-mode', 'acceptEdits', '--session-id', session,
             '--allowedTools', *B_TOOLS]
     try:
-        proc = subprocess.run(args, cwd=work, capture_output=True, text=True, timeout=B_TIMEOUT)
+        proc = subprocess.run(args, cwd=work, capture_output=True, text=True, timeout=B_TIMEOUT, stdin=subprocess.DEVNULL)
         cli, exit_code, timed_out = proc.stdout, proc.returncode, False
     except subprocess.TimeoutExpired as error:
         cli, exit_code, timed_out = error.stdout or '', None, True
@@ -293,7 +293,7 @@ def prepare2(task):
     started = time.time()
     proc = subprocess.run([agent_binary('codex'), 'exec', '--sandbox', 'workspace-write', '-m', A_MODEL,
                            '-c', f'model_reasoning_effort={A_EFFORT}', PROMPT_A2], cwd=work, capture_output=True,
-                          text=True, timeout=B_TIMEOUT)
+                          text=True, timeout=B_TIMEOUT, stdin=subprocess.DEVNULL)
     rollout = newest_codex_rollout(work, started)
     repo_ok, _ = tests_pass(work)
     memory = work / '.agent-memory' / 'codex.json'
@@ -439,6 +439,7 @@ def prepare3(task, seed):
         for kind in kinds:
             work = workdir(f'A-{task}-{pair}-{kind}')
             shutil.copytree(base / 'repo', work, dirs_exist_ok=True)
+            (work / 'ISSUE.md').unlink(missing_ok=True)  # Pilot 2's issue: the spec here is only in A's first message.
             (work / 'AGENTS.md').write_text((base / 'agents.md').read_text())
             git(work, 'init', '-q', '-b', 'main')
             git(work, 'add', '-A')
@@ -453,7 +454,8 @@ def prepare3(task, seed):
             for attempt in (1, 2):  # A crash (no reply) is rerun once; a poor result is never rerun.
                 proc = subprocess.run([agent_binary('codex'), 'exec', '--sandbox', 'workspace-write', '-m', A_MODEL,
                                        '-c', f'model_reasoning_effort={A_EFFORT}', '-o', str(reply_file), prompt],
-                                      cwd=work, capture_output=True, text=True, timeout=B_TIMEOUT)
+                                      cwd=work, capture_output=True, text=True, timeout=B_TIMEOUT,
+                                      stdin=subprocess.DEVNULL)
                 if reply_file.exists() and reply_file.read_text().strip():
                     break
                 print(f'A {task} {pair} {kind}: no reply (exit {proc.returncode}), attempt {attempt}')
