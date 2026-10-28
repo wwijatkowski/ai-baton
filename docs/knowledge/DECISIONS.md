@@ -113,3 +113,10 @@ Lasting project decisions, newest first. Format: `## YYYY-MM-DD: title`, followe
 ## 2026-10-25: Project set up with AI Baton
 - Decision: the project uses shared agent memory (AI Baton).
 - Reasoning: smooth switching between Claude, Codex and other agents.
+
+## 2026-10-28: savings claims come from a controlled benchmark, not field data
+Decision: published savings numbers come only from `bench/` (frozen tasks, isolated runs, balanced order, success and
+full-run usage per provider component); the main comparison is the same handoff as a file vs delivered by AI Baton.
+Field data (`bench/metrics.py`, run on our machine only, not shipped) is descriptive only. Reasoning: real sessions with and without AI Baton differ in
+project and task (n=9 vs n=2 so far); a cold baseline would only show that any handoff helps; Codex's critique of the
+first draft (first-edit metric, missing comparator, cache accounting). Plan: `docs/knowledge/SAVINGS_PLAN.md`.
