@@ -3,7 +3,7 @@ import argparse
 import json
 import sys
 
-from . import hook, hookcheck, init_project, mcp, metrics, models, project, recall, review, status, usage
+from . import hook, hookcheck, init_project, mcp, models, project, recall, review, status, usage
 
 
 def fmt(n):
@@ -26,23 +26,6 @@ def print_usage(report):
             if info:
                 state = 'reset' if info.get('expired') else f'{info["used_percent"]:.0f}%'
                 print(f'\nLimit {limit_id} ({label}): {state}')
-
-
-def print_metrics(result):
-    print(f'{result["conversations"]} conversations ({result["reviews_left_out"]} review and {result["bench_left_out"]} '
-          'benchmark runs left out). Descriptive only: '
-          'the groups differ in project and task, so this is not a measured saving (see docs/knowledge/SAVINGS_PLAN.md).\n')
-    print(f'{"agent":8}{"group":28}{"n":>5}{"unknown":>9}{"edited":>8}{"tokens":>12}{"calls<edit":>12}{"tokens<edit":>13}'
-          f'{"injected":>10}')
-    for g in result['groups']:
-        cell = lambda v: '-' if v is None else f'{v:,}'
-        print(f'{g["agent"]:8}{g["group"]:28}{g["conversations"]:>5}{g["usage_unknown"]:>9}{g["with_edit_attempt"]:>8}'
-              f'{cell(g["median_tokens"]):>12}'
-              f'{cell(g["median_tool_calls_before_first_edit"]):>12}{cell(g["median_tokens_before_first_edit"]):>13}'
-              f'{cell(g["median_injected_chars"]):>10}')
-    print('\nMedians. unknown: conversations whose transcript held no usage (left out of the token medians); tokens: '
-          'uncached input + cache writes + output (cache reads left out); calls<edit, tokens<edit: before the first '
-          'attempted file change (the handoff and AI Baton memory left out); injected: characters of AI Baton context.')
 
 
 def reviewer_name(result):
@@ -112,9 +95,6 @@ def main(argv=None):
     p = sub.add_parser('mcp', help='MCP server (stdio) with AI Baton memory for agents without hooks')
     p.add_argument('--agent', required=True, help='the agent this server serves, e.g. copilot or gemini')
     p.add_argument('--project', help='serve only this project (default: the project path each tool call names)')
-    p = sub.add_parser('metrics', help='one summary per conversation (counts only, kept on this machine), and a descriptive report')
-    p.add_argument('action', choices=('collect', 'report'))
-    p.add_argument('--json', action='store_true')
     p = sub.add_parser('usage', help='token usage and limits')
     p.add_argument('--days', type=int, default=30)
     p.add_argument('--project')
@@ -227,18 +207,6 @@ def main(argv=None):
             sys.exit(f'Error: {error}')
         except KeyboardInterrupt:
             pass
-    elif args.command == 'metrics':
-        if args.action == 'collect':
-            result = metrics.collect()
-            print(json.dumps(result) if args.json else
-                  f'{result["updated"]} conversations summarized; {result["conversations"]} kept in {metrics.STORE}' +
-                  (f'; {result["errors"]} could not be read' if result['errors'] else ''))
-        else:
-            result = metrics.report()
-            if args.json:
-                print(json.dumps(result, ensure_ascii=False))
-            else:
-                print_metrics(result)
     elif args.command == 'usage':
         report = usage.summarize(args.days, args.project)
         print(json.dumps(report, ensure_ascii=False) if args.json else '', end='')

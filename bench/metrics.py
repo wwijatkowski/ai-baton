@@ -1,4 +1,4 @@
-"""`baton metrics`: one summary per conversation, kept after the agents delete their transcripts (Claude Code after 30
+"""Conversation metrics (a development tool, not part of AI Baton): one summary per conversation, kept after the agents delete their transcripts (Claude Code after 30
 days by default). No prompts, replies, file names or paths: counts, the session id, client and model names, and a hash
 of the project folder. Stays on this machine. Descriptive data for docs/knowledge/SAVINGS_PLAN.md, never the source of
 savings claims.
@@ -16,11 +16,13 @@ import json
 import os
 import re
 import statistics
+import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import models
-from .project import file_lock, find_root, read_json, write_json
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from baton import models  # noqa: E402
+from baton.project import file_lock, find_root, read_json, write_json  # noqa: E402
 
 STORE = Path.home() / '.cache' / 'ai-baton' / 'metrics' / 'conversations.json'
 SOURCES = {
@@ -411,3 +413,39 @@ def report(store=None):
     return {'conversations': len(rows), 'reviews_left_out': sum(1 for c in everything if c.get('review')),
             'bench_left_out': sum(1 for c in everything if c.get('bench') and not c.get('review')),
             'median_tokens_counts': 'uncached input + cache writes + output (cache reads left out)', 'groups': out}
+
+
+def print_report(result):
+    print(f'{result["conversations"]} conversations ({result["reviews_left_out"]} review and {result["bench_left_out"]} '
+          'benchmark runs left out). Descriptive only: the groups differ in project and task, so this is not a measured '
+          'saving (see docs/knowledge/SAVINGS_PLAN.md).\n')
+    print(f'{"agent":8}{"group":28}{"n":>5}{"unknown":>9}{"edited":>8}{"tokens":>12}{"calls<edit":>12}{"tokens<edit":>13}'
+          f'{"injected":>10}')
+    cell = lambda v: '-' if v is None else f'{v:,}'
+    for g in result['groups']:
+        print(f'{g["agent"]:8}{g["group"]:28}{g["conversations"]:>5}{g["usage_unknown"]:>9}{g["with_edit_attempt"]:>8}'
+              f'{cell(g["median_tokens"]):>12}{cell(g["median_tool_calls_before_first_edit"]):>12}'
+              f'{cell(g["median_tokens_before_first_edit"]):>13}{cell(g["median_injected_chars"]):>10}')
+    print('\nMedians. unknown: conversations whose transcript held no usage (left out of the token medians); tokens: '
+          'uncached input + cache writes + output (cache reads left out); calls<edit, tokens<edit: before the first '
+          'attempted file change (the handoff and AI Baton memory left out); injected: characters of AI Baton context.')
+
+
+def main():
+    """python3 bench/metrics.py collect [--json] | report [--json]"""
+    args = sys.argv[1:]
+    if not args or args[0] not in ('collect', 'report'):
+        sys.exit('usage: python3 bench/metrics.py collect|report [--json]')
+    if args[0] == 'collect':
+        result = collect()
+        print(json.dumps(result) if '--json' in args else
+              f'{result["updated"]} conversations summarized; {result["conversations"]} kept in {STORE}' +
+              (f'; {result["errors"]} could not be read' if result['errors'] else ''))
+    elif '--json' in args:
+        print(json.dumps(report(), ensure_ascii=False))
+    else:
+        print_report(report())
+
+
+if __name__ == '__main__':
+    main()

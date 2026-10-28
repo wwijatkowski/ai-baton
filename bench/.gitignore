@@ -1,0 +1,4 @@
+__pycache__/
+# Raw transcripts (they hold system prompts and this machine's paths): kept locally, never committed.
+results/*/*-*-*-*-*-*-*.jsonl
+frozen/*/a-transcript.jsonl

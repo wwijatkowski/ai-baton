@@ -1,9 +1,5 @@
 # Changelog
 
-## 0.5.2 (preview)
-
-- `baton metrics`: once a day the panel keeps one summary per Claude Code and Codex conversation in `~/.cache/ai-baton/metrics/`, so it outlasts the transcripts the agents delete (Claude Code after 30 days): tokens per kind (uncached input, cache writes, cache reads, output), tool calls, the first attempted file change, and whether AI Baton context or another agent's checkpoint arrived. No prompts, replies, paths or file names; it never leaves your computer. `baton metrics report` shows them, described for what they are: different tasks, not a measured saving. They are groundwork for measuring what AI Baton saves (`docs/knowledge/SAVINGS_PLAN.md`).
-
 ## 0.5.1 (preview)
 
 - GitHub Copilot shares memory through its own hooks, like Claude Code and Codex: **Install hooks** on its card writes `~/.copilot/hooks/ai-baton.json`. Each message gets the shared context (newer checkpoints included), and each final answer is saved once as Copilot's checkpoint, without the agent having to call a tool (a turn with megabytes of tool output may be skipped; the previous checkpoint then stays). The hooks run only in **Copilot CLI** chats (Copilot's agent runtime); a **Local** chat runs none and gets no memory from them. **New chat** on the card opens a Copilot CLI chat. Chats already open pick the hooks up from their next message.

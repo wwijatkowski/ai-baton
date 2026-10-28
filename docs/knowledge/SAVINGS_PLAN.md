@@ -51,7 +51,9 @@ the study from the pilot's spread, preferring more tasks over more repeats; add 
 continuation only when we want those claims.
 
 ## Field data (supporting, descriptive only)
-- An exporter first (`baton metrics collect`), no panel yet: per conversation from the transcripts, incrementally and
+- Ours only, never a product feature (user, 2026-10-28: no value for other users, and "collecting metrics" sounds bad):
+  `bench/metrics.py collect` on our machine, daily by a macOS LaunchAgent (`bench/collect-daily.sh`); not in the
+  extension or the CLI it bundles. Per conversation from the transcripts, incrementally and
   idempotently (resumed conversations not duplicated): agent, model, project id (hash), whether AI Baton context was
   configured and whether another agent's checkpoint was delivered, injected characters, usage components, tool calls,
   first-edit metrics, failures and sessions without edits included. Counts only, no text; stays on the machine.

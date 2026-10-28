@@ -1,10 +1,13 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from baton import metrics, models
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'bench'))
+import metrics  # noqa: E402
+from baton import models  # noqa: E402
 
 SECRET = 'PROMPT-TEXT-THAT-MUST-NOT-BE-STORED'
 USE = {'input_tokens': 10, 'cache_creation_input_tokens': 100, 'cache_read_input_tokens': 1000, 'output_tokens': 5}

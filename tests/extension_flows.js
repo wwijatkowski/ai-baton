@@ -265,19 +265,6 @@ const test = (name, fn) => tests.push({ name, fn });
 
 // ---------- activation and the panel ----------
 
-test('conversation metrics are collected once a day, in the background', async (h) => {
-  await h.start();
-  await h.settle();
-  assert.deepStrictEqual(h.cliArgs('metrics'), [['metrics', 'collect', '--json']]);
-  await h.commands['aiBaton.refresh']();
-  await h.settle();
-  assert.strictEqual(h.cliArgs('metrics').length, 1, 'not again within a day');
-  h.memento['aiBaton.metricsCollectedAt'] = Date.now() - 25 * 3600 * 1000;
-  await h.commands['aiBaton.refresh']();
-  await h.settle();
-  assert.strictEqual(h.cliArgs('metrics').length, 2);
-});
-
 test('activation refreshes the status and the panel shows it', async (h) => {
   await h.start();
   assert.ok(h.commands['aiBaton.askForReview'], 'commands are registered');
@@ -635,7 +622,7 @@ test('a review choice is remembered only once the review has run', async (h) => 
   await h.commands['aiBaton.askForReview']();
   assert.deepStrictEqual(h.efforts, ['', 'low']);
   assert.strictEqual(h.cliArgs('review').length, 0);
-  assert.strictEqual(h.memento['aiBaton.reviewChoice'], undefined, 'cancelled before running: nothing remembered');
+  assert.deepStrictEqual(h.memento, {}, 'cancelled before running: nothing remembered');
 });
 
 test('a failed review is shown as an error', async (h) => {
