@@ -4,7 +4,7 @@
 
 AI Baton lets several coding agents (Claude Code, Codex, more later) take turns on one project without losing context: shared memory through lifecycle hooks, project knowledge in `docs/`, and token usage and plan limits in a VS Code panel.
 
-- `baton/`: Python 3 standard library only, no dependencies. `cli.py` is the entry point (`bin/baton hook|init|status|usage|recall`); `hook.py` runs on agent lifecycle events; `changes.py` records where changes live (git, shadow repo or file list); `recall.py` searches past checkpoints; `hookcheck.py` reports whether hooks are installed and (Codex) approved; `usage.py` reads token usage and limits from local agent logs; `templates/` are the files `baton init` writes into projects.
+- `baton/`: Python 3 standard library only, no dependencies. `cli.py` is the entry point (`bin/baton hook|init|status|usage|recall`); `hook.py` runs on agent lifecycle events; `changes.py` records where changes live (git, shadow repo or file list); `recall.py` searches past checkpoints; `hookcheck.py` reports whether hooks are installed and (Codex) approved; `usage.py` reads token usage and limits from local agent logs; `metrics.py` keeps one summary per conversation (counts only) for measuring savings (`docs/knowledge/SAVINGS_PLAN.md`); `templates/` are the files `baton init` writes into projects.
 - `vscode-extension/`: plain JavaScript, no build step. `extension.js` calls the CLI; `media/panel.js` and `panel.css` are the sidebar webview.
 - Agent registry: `baton/agents.json`, plus per-user extras in `~/.config/ai-baton/agents.json`.
 

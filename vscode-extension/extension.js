@@ -322,6 +322,26 @@ async function refreshAll() {
   await refreshStatus();
   await refreshModels();
   await refreshUsage();
+  collectMetrics();
+}
+
+// Once a day, in the background: one summary per conversation (counts only, ~/.cache/ai-baton/metrics), before the
+// agents delete their transcripts (Claude Code after 30 days). Nothing is shown; failures go to the Output channel.
+const METRICS_AT = 'aiBaton.metricsCollectedAt';
+let collecting = false;
+
+async function collectMetrics() {
+  const last = (memento && memento.get(METRICS_AT)) || 0;
+  if (collecting || Date.now() - last < 24 * 3600 * 1000) return;
+  collecting = true;
+  try {
+    await baton(['metrics', 'collect', '--json']);
+    if (memento) await memento.update(METRICS_AT, Date.now());
+  } catch (error) {
+    output.appendLine(`metrics: ${error.message}`);
+  } finally {
+    collecting = false;
+  }
 }
 
 function watchMemory() {

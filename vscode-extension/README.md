@@ -82,6 +82,7 @@ The memory hooks run locally: they never use the network or call a model. AI Bat
 ### Automatically, when the extension starts
 
 - `~/.ai-baton/`: the bundled command-line tool. `~/.cache/ai-baton/`: cached results.
+- `~/.cache/ai-baton/metrics/`: once a day, one summary per Claude Code and Codex conversation, so it outlasts the transcripts the agents delete: token counts, tool calls, whether AI Baton context arrived. Numbers only, no prompts, replies or file names; the project is a hash of its folder. `baton metrics report` shows them. It never leaves your computer.
 
 ### After you agree in the panel
 
