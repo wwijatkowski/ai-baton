@@ -31,14 +31,17 @@ def print_usage(report):
 def print_metrics(result):
     print(f'{result["conversations"]} conversations ({result["reviews_left_out"]} review runs left out). Descriptive only: '
           'the groups differ in project and task, so this is not a measured saving (see docs/knowledge/SAVINGS_PLAN.md).\n')
-    print(f'{"agent":8}{"group":28}{"n":>5}{"edited":>8}{"tokens":>12}{"calls<edit":>12}{"tokens<edit":>13}{"injected":>10}')
+    print(f'{"agent":8}{"group":28}{"n":>5}{"unknown":>9}{"edited":>8}{"tokens":>12}{"calls<edit":>12}{"tokens<edit":>13}'
+          f'{"injected":>10}')
     for g in result['groups']:
         cell = lambda v: '-' if v is None else f'{v:,}'
-        print(f'{g["agent"]:8}{g["group"]:28}{g["conversations"]:>5}{g["with_edit"]:>8}{cell(g["median_tokens"]):>12}'
+        print(f'{g["agent"]:8}{g["group"]:28}{g["conversations"]:>5}{g["usage_unknown"]:>9}{g["with_edit_attempt"]:>8}'
+              f'{cell(g["median_tokens"]):>12}'
               f'{cell(g["median_tool_calls_before_first_edit"]):>12}{cell(g["median_tokens_before_first_edit"]):>13}'
               f'{cell(g["median_injected_chars"]):>10}')
-    print('\nMedians. tokens: uncached input + cache writes + output (cache reads left out); calls<edit, tokens<edit: '
-          'before the first file change; injected: characters of AI Baton context.')
+    print('\nMedians. unknown: conversations whose transcript held no usage (left out of the token medians); tokens: '
+          'uncached input + cache writes + output (cache reads left out); calls<edit, tokens<edit: before the first '
+          'attempted file change (the handoff and AI Baton memory left out); injected: characters of AI Baton context.')
 
 
 def reviewer_name(result):
@@ -225,9 +228,10 @@ def main(argv=None):
             pass
     elif args.command == 'metrics':
         if args.action == 'collect':
-            changed, kept = metrics.collect()
-            print(json.dumps({'updated': changed, 'conversations': kept}) if args.json else
-                  f'{changed} conversations summarized; {kept} kept in {metrics.STORE}')
+            result = metrics.collect()
+            print(json.dumps(result) if args.json else
+                  f'{result["updated"]} conversations summarized; {result["conversations"]} kept in {metrics.STORE}' +
+                  (f'; {result["errors"]} could not be read' if result['errors'] else ''))
         else:
             result = metrics.report()
             if args.json:
