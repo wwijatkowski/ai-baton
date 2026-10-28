@@ -56,3 +56,10 @@ not used to select runs.
   ("Part 1 (please do this now)") is addressed to A. That measured the prompt's ambiguity, not the transfer of context.
   New prompt for every arm: "Part 1 of the feature from our previous conversation is done. Please do part 2 now and
   finish it." All 16 B runs are run again with it; the frozen A runs are unchanged.
+
+## Follow-up 3b (2026-10-28, decided after pilot 3's results)
+Pilot 3's AI Baton runs lost two completions to details A had not written down. AI Baton's AGENTS.md rule was changed
+(for work that is left, copy the user's requirements as given: exact formats, names, messages, options). 3b measures the
+AI Baton arm again with this version: per task, 2 new baton A runs (`bench/frozen3b/`), one B run each (4 B runs),
+everything else as in pilot 3. The other arms do not involve the rule and are not rerun; their pilot 3 results stand.
+This is a before/after on the AI Baton arm, decided after seeing results, and is reported as such.
