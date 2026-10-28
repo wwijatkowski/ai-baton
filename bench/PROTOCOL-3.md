@@ -42,5 +42,11 @@ run only as a secondary figure, undefined at zero completions, never a headline.
 stopped. After freezing A: an audit of where each requirement survived (code/tests, docs, final reply, checkpoint),
 not used to select runs.
 
+## Before the first usable A run (2026-10-28)
+- The first prepare attempt hung (codex exec waited on stdin; no session was started, nothing was produced or kept);
+  every agent now runs with stdin closed.
+- The base repos still held pilot 2's ISSUE.md (another feature's spec); it is removed before A runs, so the only
+  specification is A's first message.
+
 ## Changes after the first A run
 (none yet)
