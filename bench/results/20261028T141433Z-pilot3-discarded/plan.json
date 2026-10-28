@@ -1,0 +1,108 @@
+{
+  "seed": 20261028,
+  "model": "sonnet",
+  "effort": "medium",
+  "prompt": "Continue the work from the previous conversation.",
+  "tools": [
+    "Read",
+    "Grep",
+    "Glob",
+    "Edit",
+    "Write",
+    "Bash(python3:*)",
+    "Bash(python:*)",
+    "Bash(ls:*)",
+    "Bash(cat:*)",
+    "Bash(git status:*)",
+    "Bash(git diff:*)",
+    "Bash(git log:*)",
+    "Bash(git show:*)"
+  ],
+  "versions": {
+    "ai_baton_commit": "30267e52999bd0cb18b903c4ecadbf845da1d537",
+    "claude": "2.1.312 (Claude Code)",
+    "codex": "codex-cli 0.164.0-alpha.11.1"
+  },
+  "plan": [
+    [
+      "report",
+      "1-plain",
+      "paste"
+    ],
+    [
+      "report",
+      "1-plain",
+      "respec"
+    ],
+    [
+      "report",
+      "2-plain",
+      "paste"
+    ],
+    [
+      "report",
+      "2-plain",
+      "respec"
+    ],
+    [
+      "report",
+      "1-plain",
+      "none"
+    ],
+    [
+      "report",
+      "2-plain",
+      "none"
+    ],
+    [
+      "report",
+      "2-baton",
+      "baton"
+    ],
+    [
+      "report",
+      "1-baton",
+      "baton"
+    ],
+    [
+      "bundles",
+      "2-plain",
+      "none"
+    ],
+    [
+      "bundles",
+      "2-plain",
+      "paste"
+    ],
+    [
+      "bundles",
+      "1-plain",
+      "paste"
+    ],
+    [
+      "bundles",
+      "2-plain",
+      "respec"
+    ],
+    [
+      "bundles",
+      "1-plain",
+      "none"
+    ],
+    [
+      "bundles",
+      "1-plain",
+      "respec"
+    ],
+    [
+      "bundles",
+      "1-baton",
+      "baton"
+    ],
+    [
+      "bundles",
+      "2-baton",
+      "baton"
+    ]
+  ]
+}
