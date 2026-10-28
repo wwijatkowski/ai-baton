@@ -1,7 +1,12 @@
-"""Handoff benchmark runner (protocol: bench/PROTOCOL.md). Uses the real agents and your plan's tokens.
+"""Handoff benchmark runner. Uses the real agents and your plan's tokens.
 
+Pilot 1 (bench/PROTOCOL.md): shelf, textstats; a handoff file vs AI Baton.
     python3 bench/run.py prepare <task>        agent A (Codex) does part 1 once; frozen into bench/frozen/<task>/
     python3 bench/run.py pilot [--seed N]      the 12 B runs (Claude), results in bench/results/<stamp>/
+Pilot 2 (bench/PROTOCOL-2.md): habits, pricing; a missing or stale handoff; nothing / pasted reply / AI Baton.
+    python3 bench/run.py prepare2 <task>       agent A once; frozen into bench/frozen2/<task>/
+    python3 bench/run.py pilot2 [--seed N]     the 12 B runs
+Both:
     python3 bench/run.py check <task>          the hidden tests against the reference solution (no agents)
 
 Every run works in its own folder under /tmp/baton-bench-*; nothing of this checkout is visible to the agents.
@@ -28,6 +33,9 @@ import metrics  # noqa: E402  (bench/metrics.py)
 
 BATON = ROOT / 'bin' / 'baton'
 TASKS = ('shelf', 'textstats')
+TASKS2 = ('habits', 'pricing')
+CONDITIONS = ('missing', 'stale')
+ARMS2 = ('none', 'paste', 'baton')
 ARMS = ('file', 'baton')
 REPEATS = 3
 B_TIMEOUT = 30 * 60
@@ -35,6 +43,11 @@ A_MODEL, A_EFFORT = 'gpt-6.1-sol', 'medium'
 B_MODEL, B_EFFORT = 'sonnet', 'medium'  # Pilot: sonnet (PROTOCOL.md, changes)
 PROMPT_A = 'Implement part 1 of ISSUE.md as described in part1.md. Follow AGENTS.md.'
 PROMPT_B = 'Continue the work on this project: finish ISSUE.md. Part 1 is done.'
+PROMPT_A2 = 'Implement part 1 of ISSUE.md as described in part1.md.'
+PROMPT_B2 = 'Continue the work on this project: finish ISSUE.md.'
+# Pilot 2: in every arm's AGENTS.md, so no arm is told to trust old notes more than another.
+NEUTRAL_RULE = ('\n## Notes from earlier work\nNotes from earlier work (handoff files, messages, checkpoints) may be out '
+                'of date: check them against the code and git before relying on them.\n')
 # Same in both arms: edit files, run Python and read-only git; nothing else on this machine.
 B_TOOLS = ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash(python3:*)', 'Bash(python:*)', 'Bash(ls:*)', 'Bash(cat:*)',
            'Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)']
@@ -182,13 +195,14 @@ def setup_arm(work, task, arm):
     git(work, 'commit', '-q', '-m', 'Workspace')
 
 
-def run_b(task, arm, out):
-    work = workdir(f'B-{task}-{arm}')
+def run_b(task, arm, out, setup=None, prompt=PROMPT_B, label=None):
+    label = label or f'{task}-{arm}'
+    work = workdir(f'B-{label}')
     shutil.rmtree(work)
-    setup_arm(work, task, arm)
+    (setup or setup_arm)(work, task, arm)
     session = str(uuid.uuid4())
     started = time.time()
-    args = [agent_binary('claude'), '-p', PROMPT_B, '--model', B_MODEL, '--effort', B_EFFORT, '--output-format', 'json',
+    args = [agent_binary('claude'), '-p', prompt, '--model', B_MODEL, '--effort', B_EFFORT, '--output-format', 'json',
             '--setting-sources', 'project,local', '--permission-mode', 'acceptEdits', '--session-id', session,
             '--allowedTools', *B_TOOLS]
     try:
@@ -207,7 +221,7 @@ def run_b(task, arm, out):
         for path in found + sorted(transcripts.glob(f'*/{session}/subagents/*.jsonl')):
             metrics.parse_claude(s, path, path.parent.name == 'subagents')
         summary = s.result(None)
-        shutil.copy(found[0], out / f'{task}-{arm}-{session}.jsonl')
+        shutil.copy(found[0], out / f'{label}-{session}.jsonl')
         for folder in {p.parent for p in found}:
             if folder.name.startswith('-private-tmp-baton-bench') or folder.name.startswith('-tmp-baton-bench'):
                 shutil.rmtree(folder, ignore_errors=True)
@@ -248,18 +262,170 @@ def pilot(seed):
     print(f'results: {out}')
 
 
+# ---------- pilot 2 ----------
+
+def prepare2(task):
+    """Agent A once per task, in a project set up with AI Baton (its hooks capture the final reply); frozen with a
+    neutral history: the project, then A's code and tests only (no docs, so B cannot find a handoff in git)."""
+    frozen = BENCH / 'frozen2' / task
+    if frozen.exists():
+        sys.exit(f'{frozen} exists: a frozen A run is never replaced once B runs used it (see PROTOCOL-2.md)')
+    source = BENCH / 'tasks' / task
+    work = workdir(f'A-{task}')
+    shutil.copytree(source / 'repo', work, dirs_exist_ok=True)
+    (work / 'AGENTS.md').write_text((source / 'agents.md').read_text() + NEUTRAL_RULE)
+    git(work, 'init', '-q')
+    git(work, 'add', '-A')
+    git(work, 'commit', '-q', '-m', 'Project')
+    base = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=work, capture_output=True, text=True, check=True).stdout.strip()
+    subprocess.run([sys.executable, str(BATON), 'init', str(work)], check=True, stdout=subprocess.DEVNULL)
+    shutil.copy(source / 'part1.md', work / 'part1.md')
+    started = time.time()
+    proc = subprocess.run([agent_binary('codex'), 'exec', '--sandbox', 'workspace-write', '-m', A_MODEL,
+                           '-c', f'model_reasoning_effort={A_EFFORT}', PROMPT_A2], cwd=work, capture_output=True,
+                          text=True, timeout=B_TIMEOUT)
+    rollout = newest_codex_rollout(work, started)
+    repo_ok, _ = tests_pass(work)
+    memory = work / '.agent-memory' / 'codex.json'
+    print(f'A finished: exit {proc.returncode}, repo tests {"pass" if repo_ok else "FAIL"}, rollout {rollout}')
+    if proc.returncode != 0 or not repo_ok or not memory.exists():
+        sys.exit(f'A run not usable (kept for a look: {work}); fix the cause and prepare again')
+    # What A changed outside its code and tests (docs, rules) is left out of the frozen history, and noted.
+    changed = subprocess.run(['git', 'status', '--porcelain', '--untracked-files=all'], cwd=work, capture_output=True,
+                             text=True, check=True).stdout.splitlines()
+    paths = [line[3:] for line in changed]
+    code = [p for p in paths if not (p.startswith(('docs/', '.agent-memory/', '.claude/', '.codex/')) or
+                                     p in ('AGENTS.md', 'CLAUDE.md', '.baton.json', '.gitignore', 'part1.md'))]
+    left_out = sorted(set(paths) - set(code))
+    clean = workdir(f'A-{task}-frozen')
+    shutil.rmtree(clean)
+    subprocess.run(['git', 'clone', '-q', str(work), str(clean)], check=True, capture_output=True)
+    subprocess.run(['git', 'checkout', '-q', base], cwd=clean, check=True)
+    subprocess.run(['git', 'checkout', '-q', '-B', 'main'], cwd=clean, check=True)
+    for path in code:
+        target = clean / path
+        if (work / path).exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(work / path, target)
+        else:
+            target.unlink(missing_ok=True)
+    (clean / 'AGENTS.md').unlink()  # Each arm writes its own.
+    git(clean, 'add', '-A')
+    git(clean, 'commit', '-q', '-m', 'Part 1')
+    if not tests_pass(clean)[0]:
+        sys.exit(f'the frozen code alone fails its tests (kept: {work}, {clean})')
+    frozen.mkdir(parents=True)
+    subprocess.run(['git', 'bundle', 'create', str(frozen / 'repo.bundle'), 'main'], cwd=clean, check=True,
+                   capture_output=True)
+    with tarfile.open(frozen / 'agent-memory.tar.gz', 'w:gz') as tar:
+        tar.add(work / '.agent-memory', arcname='.agent-memory')
+    reply = json.loads(memory.read_text()).get('last_reply') or ''
+    summary = None
+    if rollout:
+        s = metrics.Summary('codex')
+        metrics.parse_codex(s, rollout)
+        summary = s.result(None)
+        shutil.copy(rollout, frozen / 'a-transcript.jsonl')
+    (frozen / 'a.json').write_text(json.dumps({
+        'model': A_MODEL, 'effort': A_EFFORT, 'prompt': PROMPT_A2, 'exit': proc.returncode,
+        'seconds': round(time.time() - started), 'summary': summary, 'final_reply': reply,
+        'left_out_of_history': left_out, 'at': datetime.now(timezone.utc).isoformat()}, indent=2) + '\n')
+    shutil.rmtree(work)
+    shutil.rmtree(clean)
+    print(f'frozen: {frozen}; left out of the history: {left_out}')
+
+
+def setup_arm2(work, task, arm, condition):
+    frozen, source = BENCH / 'frozen2' / task, BENCH / 'tasks' / task
+    subprocess.run(['git', 'clone', '-q', '-b', 'main', str(frozen / 'repo.bundle'), str(work)], check=True,
+                   capture_output=True)
+    (work / 'AGENTS.md').write_text((source / 'agents.md').read_text() + NEUTRAL_RULE)
+    if arm == 'baton':
+        with tarfile.open(frozen / 'agent-memory.tar.gz') as tar:
+            tar.extractall(work, filter='data') if hasattr(tarfile, 'data_filter') else tar.extractall(work)
+        empty = Path(tempfile.mkdtemp(prefix='baton-bench-home-', dir='/tmp'))
+        try:
+            subprocess.run([sys.executable, str(BATON), 'init', str(work), '--agents=claude'], check=True,
+                           env={**os.environ, 'HOME': str(empty)}, stdout=subprocess.DEVNULL)
+        finally:
+            shutil.rmtree(empty, ignore_errors=True)
+        if not (work / '.claude' / 'settings.json').exists() or 'BEGIN AI-BATON' not in (work / 'AGENTS.md').read_text():
+            raise RuntimeError('AI Baton not set up in the baton arm')
+        # Only AI Baton itself: the docs `baton init` adds as templates would differ from the other arms.
+        (work / 'docs' / 'STATUS.md').unlink(missing_ok=True)
+        shutil.rmtree(work / 'docs' / 'knowledge', ignore_errors=True)
+        (work / 'docs' / 'AGENT_HANDOFF.md').unlink(missing_ok=True)
+    else:
+        (work / 'CLAUDE.md').write_text('@AGENTS.md\n')  # How Claude Code reads AGENTS.md.
+    git(work, 'add', '-A')
+    git(work, 'commit', '-q', '-m', 'Workspace')
+    if condition == 'stale':
+        # Written before part 1, so it belongs to the first commit: git must not show it as newer than the code.
+        tip = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=work, capture_output=True, text=True, check=True).stdout.strip()
+        git(work, 'checkout', '-q', 'HEAD~2')
+        (work / 'docs').mkdir(exist_ok=True)
+        shutil.copy(source / 'stale-handoff.md', work / 'docs' / 'AGENT_HANDOFF.md')
+        git(work, 'add', '-A')
+        git(work, 'commit', '-q', '--amend', '--no-edit')
+        git(work, 'cherry-pick', f'{tip}~1', tip)
+        git(work, 'checkout', '-q', '-B', 'main')
+
+
+def versions():
+    def out(args):
+        try:
+            return subprocess.run(args, capture_output=True, text=True, timeout=30).stdout.strip()[:200]
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+    return {'ai_baton_commit': out(['git', '-C', str(ROOT), 'rev-parse', 'HEAD']),
+            'claude': out([agent_binary('claude'), '--version']), 'codex': out([agent_binary('codex'), '--version'])}
+
+
+def pilot2(seed):
+    for task in TASKS2:
+        if not (BENCH / 'frozen2' / task / 'repo.bundle').exists():
+            sys.exit(f'{task} has no frozen A run: python3 bench/run.py prepare2 {task}')
+    rng = random.Random(seed)
+    plan = []
+    for task in TASKS2:
+        cells = [(task, condition, arm) for condition in CONDITIONS for arm in ARMS2]
+        rng.shuffle(cells)
+        plan += cells
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    out = BENCH / 'results' / f'{stamp}-pilot2'
+    out.mkdir(parents=True)
+    (out / 'plan.json').write_text(json.dumps({'seed': seed, 'model': B_MODEL, 'effort': B_EFFORT, 'prompt': PROMPT_B2,
+                                               'tools': B_TOOLS, 'versions': versions(), 'plan': plan}, indent=2) + '\n')
+    for i, (task, condition, arm) in enumerate(plan, 1):
+        print(f'[{i}/{len(plan)}] {task} {condition} {arm}', flush=True)
+        prompt = PROMPT_B2
+        if arm == 'paste':
+            reply = json.loads((BENCH / 'frozen2' / task / 'a.json').read_text())['final_reply']
+            prompt += "\n\nThe previous agent's last message:\n\n" + reply
+        row = {'order': i, 'condition': condition, **run_b(
+            task, arm, out, setup=lambda w, t, a, c=condition: setup_arm2(w, t, a, c), prompt=prompt,
+            label=f'{task}-{condition}-{arm}')}
+        with open(out / 'runs.jsonl', 'a', encoding='utf-8') as stream:
+            stream.write(json.dumps(row) + '\n')
+        usage = (row['summary'] or {}).get('usage') or {}
+        print(f'    success={row["success"]} tokens={metrics.tokens(usage) if usage else "?"} seconds={row["seconds"]}', flush=True)
+    print(f'results: {out}')
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=('prepare', 'pilot', 'check'))
+    parser.add_argument('command', choices=('prepare', 'pilot', 'check', 'prepare2', 'pilot2'))
     parser.add_argument('task', nargs='?')
     parser.add_argument('--seed', type=int, default=20261028)
     args = parser.parse_args()
     if args.command == 'pilot':
         pilot(args.seed)
-    elif args.task not in TASKS:
-        sys.exit(f'task: one of {", ".join(TASKS)}')
+    elif args.command == 'pilot2':
+        pilot2(args.seed)
+    elif args.task not in TASKS + TASKS2:
+        sys.exit(f'task: one of {", ".join(TASKS + TASKS2)}')
     else:
-        (prepare if args.command == 'prepare' else check)(args.task)
+        {'prepare': prepare, 'check': check, 'prepare2': prepare2}[args.command](args.task)
 
 
 if __name__ == '__main__':
