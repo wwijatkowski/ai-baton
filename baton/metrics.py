@@ -46,6 +46,7 @@ BATON_MARKS = ('This project uses AI Baton', 'historical checkpoints from other 
 # One delivered checkpoint (hook.checkpoint_text): "[codex] 2026-..." or "[claude, your other conversation] 2026-...".
 CHECKPOINT = re.compile(r'^\[([a-z0-9-]+)(, your other conversation)?\] \d{4}-\d\d-\d\d', re.MULTILINE)
 REVIEW_MARK = "You are reviewing a teammate's change"  # review.PROMPT
+BENCH_FOLDER = '/baton-bench-'  # bench/run.py works in /tmp/baton-bench-*: not field data.
 
 
 def project_id(cwd):
@@ -86,8 +87,18 @@ def texts(content):
     return ' '.join(b.get('text', '') for b in content if isinstance(b, dict) and isinstance(b.get('text'), str))
 
 
+SHELL_TARGET = re.compile(r'(?:(?<![-=<>&\d])>{1,2}|\btee\s+(?:-a\s+)?|\b(?:Set-Content|Add-Content|Out-File)\s+(?:-Path\s+)?)'
+                          r'\s*["\']?([^\s"\';|&>]+)', re.IGNORECASE)
+
+
 def shell_edit(command):
-    return isinstance(command, str) and bool(SHELL_EDIT.search(command))
+    """True when a shell command looks like it changes files other than the handoff and AI Baton's memory."""
+    if not isinstance(command, str) or not SHELL_EDIT.search(command):
+        return False
+    targets = SHELL_TARGET.findall(command)
+    # Only redirects, tee and Set-Content name their files plainly; sed -i, git apply and the like count as edits.
+    plain = not re.search(r'\bsed\s+-i|\bperl\s+-p?i\b|\bgit\s+(apply|checkout|restore)\b', command, re.IGNORECASE)
+    return not (plain and targets and bookkeeping(targets))
 
 
 def bookkeeping(paths):
@@ -170,9 +181,11 @@ class Summary:
             # None, not zeros, when the transcript held no usage at all: unknown is not free.
             'usage': self.usage if known else None,
             'subagents': {'requests': self.subagent_requests, 'usage': self.subagents} if self.subagent_requests else None,
-            'tool_calls': self.tool_calls, 'first_edit': self.first_edit if known else None,
+            'tool_calls': self.tool_calls,
+            # Seen even without usage; its tokens are then unknown.
+            'first_edit': self.first_edit and {**self.first_edit, 'usage_before': self.first_edit['usage_before'] if known else None},
             'baton': {'deliveries': self.deliveries, 'chars': self.injected_chars, 'checkpoints': self.checkpoints},
-            'review': self.review, 'source': source,
+            'review': self.review, 'bench': bool(self.cwd and BENCH_FOLDER in self.cwd), 'source': source,
         }
 
 
@@ -328,7 +341,9 @@ def collect(store=None, sources=None):
     with file_lock(store.with_name(store.name + '.lock'), timeout=10):
         data = read_json(store, {}) if store.exists() else {}
         conversations = data.get('conversations') if isinstance(data, dict) else None
-        conversations = conversations if isinstance(conversations, dict) else {}
+        # Summaries of an older format (other keys and fields) are rebuilt from the transcripts still on disk.
+        conversations = {k: v for k, v in (conversations if isinstance(conversations, dict) else {}).items()
+                         if isinstance(v, dict) and v.get('version') == VERSION}
         updated = errors = 0
         for key, files in conversations_on_disk(sources or SOURCES).items():
             agent = key.split(':', 1)[0]
@@ -369,8 +384,8 @@ def report(store=None):
     Baton context without checkpoints / none. Not a comparison of like with like: projects and tasks differ."""
     path = Path(store or STORE)
     data = read_json(path, {}) if path.exists() else {}
-    everything = list((data.get('conversations') or {}).values())
-    rows = [c for c in everything if not c.get('review')]
+    everything = [c for c in (data.get('conversations') or {}).values() if isinstance(c, dict) and c.get('version') == VERSION]
+    rows = [c for c in everything if not c.get('review') and not c.get('bench')]
     groups = {}
     for row in rows:
         baton = row.get('baton') or {}
@@ -382,15 +397,17 @@ def report(store=None):
     out = []
     for (agent, kind), group in sorted(groups.items()):
         known = [r for r in group if r.get('usage') is not None]
-        edited = [r for r in known if r.get('first_edit')]
+        edited = [r for r in group if r.get('first_edit')]
         out.append({
             'agent': agent, 'group': kind, 'conversations': len(group), 'usage_unknown': len(group) - len(known),
             'with_edit_attempt': len(edited),
             'median_tokens': median([tokens(r['usage']) for r in known]),  # Cache reads left out.
             'median_usage': {k: median([r['usage'][k] for r in known]) for k in USAGE},
             'median_tool_calls_before_first_edit': median([r['first_edit']['tool_calls_before'] for r in edited]),
-            'median_tokens_before_first_edit': median([tokens(r['first_edit']['usage_before']) for r in edited]),
+            'median_tokens_before_first_edit': median([tokens(r['first_edit']['usage_before']) for r in edited
+                                                       if r['first_edit']['usage_before'] is not None]),
             'median_injected_chars': median([r['baton']['chars'] for r in group if r['baton']['deliveries']]),
         })
-    return {'conversations': len(rows), 'reviews_left_out': len(everything) - len(rows),
+    return {'conversations': len(rows), 'reviews_left_out': sum(1 for c in everything if c.get('review')),
+            'bench_left_out': sum(1 for c in everything if c.get('bench') and not c.get('review')),
             'median_tokens_counts': 'uncached input + cache writes + output (cache reads left out)', 'groups': out}

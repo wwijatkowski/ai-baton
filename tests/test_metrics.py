@@ -122,10 +122,13 @@ class MetricsTest(unittest.TestCase):
             user('go'),
             claude_message('m1', tool('Write', file_path='/work/demo/docs/AGENT_HANDOFF.md')),
             claude_message('m2', tool('Bash', command='git restore --help')),
+            claude_message('m4', tool('Bash', command='cat > docs/AGENT_HANDOFF.md <<EOF')),
+            claude_message('m5', tool('Bash', command='Set-Content docs/STATUS.md done')),
             claude_message('m3', tool('Bash', command='Set-Content notes.md "x"')),
         ))
         self.collect()
-        self.assertEqual(self.conversation('claude:s3')['first_edit']['tool_calls_before'], 2)
+        self.assertEqual(self.conversation('claude:s3')['first_edit']['tool_calls_before'], 4)
+        self.assertTrue(metrics.shell_edit('echo x > docs/AGENT_HANDOFF.md > a.py'))  # Work as well as bookkeeping.
 
     def test_codex_conversation_and_its_resumed_file(self):
         token = lambda total, cached, out, t: {'type': 'event_msg', 'timestamp': t, 'payload': {
@@ -169,16 +172,24 @@ class MetricsTest(unittest.TestCase):
         for sid, first in (('work', 'fix the bug'), ('registered', 'review it'),
                            ('old-review', "You are reviewing a teammate's change in this project")):
             (self.claude / 'proj' / f'{sid}.jsonl').write_text(lines(user(first), claude_message(f'm-{sid}')))
-        (self.claude / 'proj' / 'nousage.jsonl').write_text(lines(user('hello')))
+        bench = claude_message('m-b')
+        bench['cwd'] = '/tmp/baton-bench-B-shelf-file-x'
+        (self.claude / 'proj' / 'bench.jsonl').write_text(lines(user('go'), bench))
+        (self.claude / 'proj' / 'nousage.jsonl').write_text(lines(
+            user('hello'), {'type': 'assistant', 'message': {'id': 'n1', 'content': [tool('Read'), tool('Write', file_path='x.py')]}}))
         (self.claude / 'proj' / 'odd.jsonl').write_text(lines(user('x'), {'type': 'assistant', 'message': {'content': 5}}))
         models.add_review_session('registered')
         result = self.collect()
         self.assertEqual(result['errors'], 0)
-        self.assertIsNone(self.conversation('claude:nousage')['usage'])  # Unknown, not zero.
+        nousage = self.conversation('claude:nousage')
+        self.assertIsNone(nousage['usage'])  # Unknown, not zero.
+        self.assertEqual((nousage['first_edit']['tool_calls_before'], nousage['first_edit']['usage_before']), (1, None))
         report = metrics.report(self.store)
-        self.assertEqual(report['reviews_left_out'], 2)
+        self.assertEqual((report['reviews_left_out'], report['bench_left_out']), (2, 1))
         [group] = report['groups']
-        self.assertEqual((group['conversations'], group['usage_unknown']), (3, 2))
+        self.assertEqual((group['conversations'], group['usage_unknown'], group['with_edit_attempt']), (3, 2, 1))
+        self.assertIsNone(group['median_tokens_before_first_edit'])
+        self.assertEqual(group['median_tool_calls_before_first_edit'], 1)
         # A file that breaks the parser is counted as an error; the others are still saved.
         real = metrics.parse_claude
 
@@ -189,7 +200,17 @@ class MetricsTest(unittest.TestCase):
         self.store.unlink()
         with mock.patch.dict(metrics.PARSERS, {'claude': parse}):
             result = self.collect()
-        self.assertEqual((result['errors'], result['conversations']), (1, 4))
+        self.assertEqual((result['errors'], result['conversations']), (1, 5))
+
+    def test_an_older_store_is_rebuilt(self):
+        (self.claude / 'proj' / 's9.jsonl').write_text(lines(user('go'), claude_message('m1')))
+        self.store.parent.mkdir(parents=True)
+        self.store.write_text(json.dumps({'version': 2, 'conversations': {
+            'claude:0123456789abcdef': {'version': 2, 'agent': 'claude', 'session': 's9', 'baton': {'injections': 1}},
+            'codex:gone': {'version': 2, 'agent': 'codex', 'session': 'gone'}}}))
+        self.collect()
+        self.assertEqual(list(self.stored()), ['claude:s9'])
+        self.assertEqual(metrics.report(self.store)['conversations'], 1)
 
     def test_shell_edits(self):
         for command in ('cat a > out.txt', 'sed -i s/a/b/ f', 'git apply p.diff', 'tee notes.md', 'echo >> log',

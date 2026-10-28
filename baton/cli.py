@@ -29,7 +29,8 @@ def print_usage(report):
 
 
 def print_metrics(result):
-    print(f'{result["conversations"]} conversations ({result["reviews_left_out"]} review runs left out). Descriptive only: '
+    print(f'{result["conversations"]} conversations ({result["reviews_left_out"]} review and {result["bench_left_out"]} '
+          'benchmark runs left out). Descriptive only: '
           'the groups differ in project and task, so this is not a measured saving (see docs/knowledge/SAVINGS_PLAN.md).\n')
     print(f'{"agent":8}{"group":28}{"n":>5}{"unknown":>9}{"edited":>8}{"tokens":>12}{"calls<edit":>12}{"tokens<edit":>13}'
           f'{"injected":>10}')

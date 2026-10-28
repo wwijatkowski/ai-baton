@@ -2,7 +2,7 @@
   "name": "ai-baton",
   "displayName": "AI Baton: Claude Code & Codex memory, handoff, review",
   "description": "Shared memory and handoffs between Claude Code and OpenAI Codex: one agent picks up where the other stopped, reviews its work, and you see usage and plan limits. VS Code, Cursor, Windsurf (Open VSX).",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "preview": true,
   "publisher": "wwijatkowski",
   "license": "SEE LICENSE IN LICENSE",
