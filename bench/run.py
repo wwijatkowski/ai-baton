@@ -39,7 +39,8 @@ TASKS = ('shelf', 'textstats')
 TASKS2 = ('habits', 'pricing')
 TASKS3 = {'report': 'habits', 'bundles': 'pricing'}  # task -> base repo
 PAIRS3 = 2
-PROMPT_B3 = 'Continue the work from the previous conversation.'
+# The user knows part 1 is done and asks for the rest (the first wording made B stop after checking part 1).
+PROMPT_B3 = 'Part 1 of the feature from our previous conversation is done. Please do part 2 now and finish it.'
 CONDITIONS = ('missing', 'stale')
 ARMS2 = ('none', 'paste', 'baton')
 ARMS = ('file', 'baton')
