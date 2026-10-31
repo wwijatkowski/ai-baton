@@ -15,6 +15,7 @@
 - **Ask for review.** Pick the conversation that made the changes and a reviewer: another agent, or the same one with another model and effort for this review only (a cheap one for everyday changes, a strong one for big ones). It critiques that work read-only (the changes, with or without git; or the conversation's replies when no files changed) and gives at least three ranked points with fixes. You can send the review back to the author's conversation (it is copied; you paste it). The author is asked to say what it accepts and to wait for your "ok" before changing code. Agents also run reviews themselves when you say "ask Codex".
 - **Recent work.** Sessions that saved AI Baton checkpoints, newest first, with their summaries; reopen a conversation or start a review from one.
 - **Usage and limits.** Tokens per day per agent, for this project or all, and the plan limits each agent last reported.
+- **Context size.** Each agent card shows how much its conversations in this project re-read with every request, and suggests a fresh start or `/compact` when one passes half of the model's window.
 - **Agents at a glance.** Model and effort for new conversations, which agent is working, and a warning when memory hooks are missing or not yet approved.
 
 ### Ask for review
@@ -128,6 +129,7 @@ AI Baton relies on details of Claude Code, Codex and Copilot that are not public
 - `aiBaton.python`: the Python interpreter (default `python3`).
 - `aiBaton.home`: leave empty to use the bundled command-line tool; set a folder to use a development checkout.
 - `aiBaton.usageDays`, `aiBaton.refreshSeconds`: usage chart range and refresh interval.
+- `aiBaton.contextWarning`: warn when a conversation's context passes this share of the model's window, in percent (default 50; 0 turns it off).
 
 ## License
 
