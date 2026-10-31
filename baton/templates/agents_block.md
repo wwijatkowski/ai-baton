@@ -12,7 +12,7 @@ When you start:
 
 After significant work:
 - Unless your AI Baton context says a hook saves your turns, call `baton_checkpoint` (if you have it) with your session_id and a short summary: what was done, how it was verified, what is left, the next step.
-- Update `docs/AGENT_HANDOFF.md`: what was done, how it was verified, what is left, the next step. Keep it short and replace outdated content instead of appending forever.
+- Update `docs/AGENT_HANDOFF.md`: what was done, how it was verified, what is left, the next step. Keep it short and replace outdated content instead of appending forever. For work that is left, copy the user's requirements as they gave them (exact formats, names, messages, options): the next agent may not have seen that conversation.
 - Add lasting decisions to `docs/knowledge/DECISIONS.md` (date, decision, reasoning).
 - Record overall progress in `docs/STATUS.md`.
 - AI Baton notices the handoff update and points the next agent to it; you do not need to repeat it in your reply.

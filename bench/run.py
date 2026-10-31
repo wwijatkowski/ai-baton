@@ -33,6 +33,7 @@ BENCH = Path(__file__).resolve().parent
 ROOT = BENCH.parent
 sys.path.insert(0, str(ROOT))
 import metrics  # noqa: E402  (bench/metrics.py)
+import redact  # noqa: E402  (bench/redact.py: no user config in saved transcripts)
 
 BATON = ROOT / 'bin' / 'baton'
 TASKS = ('shelf', 'textstats')
@@ -153,7 +154,7 @@ def prepare(task):
         s = metrics.Summary('codex')
         metrics.parse_codex(s, rollout)
         summary = s.result(None)
-        shutil.copy(rollout, frozen / 'a-transcript.jsonl')
+        redact.copy(rollout, frozen / 'a-transcript.jsonl')
     (frozen / 'a.json').write_text(json.dumps({
         'model': A_MODEL, 'effort': A_EFFORT, 'prompt': PROMPT_A, 'exit': proc.returncode, 'seconds': round(time.time() - started),
         'summary': summary, 'at': datetime.now(timezone.utc).isoformat()}, indent=2) + '\n')
@@ -336,7 +337,7 @@ def prepare2(task):
         s = metrics.Summary('codex')
         metrics.parse_codex(s, rollout)
         summary = s.result(None)
-        shutil.copy(rollout, frozen / 'a-transcript.jsonl')
+        redact.copy(rollout, frozen / 'a-transcript.jsonl')
     (frozen / 'a.json').write_text(json.dumps({
         'model': A_MODEL, 'effort': A_EFFORT, 'prompt': PROMPT_A2, 'exit': proc.returncode,
         'seconds': round(time.time() - started), 'summary': summary, 'final_reply': reply,
@@ -425,17 +426,18 @@ def pilot2(seed):
 
 # ---------- pilot 3 ----------
 
-def prepare3(task, seed):
+def prepare3(task, seed, variant=''):
     """PAIRS3 independent pairs of A runs (plain, baton), order randomized in each pair; everything A writes is kept."""
-    frozen = BENCH / 'frozen3' / task
+    frozen = BENCH / f'frozen3{variant}' / task
     if frozen.exists():
         sys.exit(f'{frozen} exists: frozen A runs are never replaced once B runs used them (see PROTOCOL-3.md)')
+    only = ('baton',) if variant == 'b' else ('plain', 'baton')  # 3b: the AI Baton arm again, with a newer rule.
     base = BENCH / 'tasks' / TASKS3[task]
     spec = (BENCH / 'tasks3' / task / 'spec.md').read_text()
     prompt = spec.rstrip() + '\n\nPlease do part 1 now; part 2 will be done later in another conversation.'
     rng = random.Random(f'{seed}-{task}')
     for pair in range(1, PAIRS3 + 1):
-        kinds = ['plain', 'baton']
+        kinds = [k for k in ('plain', 'baton') if k in only]
         rng.shuffle(kinds)
         for kind in kinds:
             work = workdir(f'A-{task}-{pair}-{kind}')
@@ -478,7 +480,7 @@ def prepare3(task, seed):
                 s = metrics.Summary('codex')
                 metrics.parse_codex(s, rollout)
                 summary = s.result(None)
-                shutil.copy(rollout, state / 'a-transcript.jsonl')
+                redact.copy(rollout, state / 'a-transcript.jsonl')
             (state / 'a.json').write_text(json.dumps({
                 'model': A_MODEL, 'effort': A_EFFORT, 'kind': kind, 'pair': pair, 'exit': proc.returncode,
                 'repo_tests': repo_ok, 'seconds': round(time.time() - started), 'summary': summary,
@@ -508,12 +510,12 @@ def setup_arm3(work, task, state, arm):
     subprocess.run(GIT + ['commit', '-q', '-m', 'Workspace'], cwd=work, capture_output=True)
 
 
-def pilot3(seed):
+def pilot3(seed, variant=''):
     rng = random.Random(seed)
     plan = []
     for task in TASKS3:
-        states = sorted((BENCH / 'frozen3' / task).glob('*-*'))
-        if len(states) != 2 * PAIRS3:
+        states = sorted((BENCH / f'frozen3{variant}' / task).glob('*-*'))
+        if len(states) != (1 if variant == 'b' else 2) * PAIRS3:
             sys.exit(f'{task}: {len(states)} frozen A states, expected {2 * PAIRS3}: python3 bench/run.py prepare3 {task}')
         cells = []
         for state in states:
@@ -522,12 +524,12 @@ def pilot3(seed):
         rng.shuffle(cells)
         plan += cells
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-    out = BENCH / 'results' / f'{stamp}-pilot3'
+    out = BENCH / 'results' / f'{stamp}-pilot3{variant}'
     out.mkdir(parents=True)
     (out / 'plan.json').write_text(json.dumps({'seed': seed, 'model': B_MODEL, 'effort': B_EFFORT, 'prompt': PROMPT_B3,
                                                'tools': B_TOOLS, 'versions': versions(), 'plan': plan}, indent=2) + '\n')
     for i, (task, state_name, arm) in enumerate(plan, 1):
-        state = BENCH / 'frozen3' / task / state_name
+        state = BENCH / f'frozen3{variant}' / task / state_name
         print(f'[{i}/{len(plan)}] {task} {state_name} {arm}', flush=True)
         prompt = PROMPT_B3
         if arm == 'paste':
@@ -549,17 +551,18 @@ def main():
     parser.add_argument('command', choices=('prepare', 'pilot', 'check', 'prepare2', 'pilot2', 'prepare3', 'pilot3'))
     parser.add_argument('task', nargs='?')
     parser.add_argument('--seed', type=int, default=20261028)
+    parser.add_argument('--variant', default='', choices=('', 'b'), help='pilot 3b: the AI Baton arm only, new A runs')
     args = parser.parse_args()
     if args.command == 'pilot':
         pilot(args.seed)
     elif args.command == 'pilot2':
         pilot2(args.seed)
     elif args.command == 'pilot3':
-        pilot3(args.seed)
+        pilot3(args.seed, args.variant)
     elif args.command == 'prepare3':
         if args.task not in TASKS3:
             sys.exit(f'task: one of {", ".join(TASKS3)}')
-        prepare3(args.task, args.seed)
+        prepare3(args.task, args.seed, args.variant)
     elif args.task not in TASKS + TASKS2 + tuple(TASKS3):
         sys.exit(f'task: one of {", ".join(TASKS + TASKS2 + tuple(TASKS3))}')
     else:
