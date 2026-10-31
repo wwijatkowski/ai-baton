@@ -165,15 +165,19 @@ if (!panel.app.textContent.includes('No reset time yet')) failures.push('panel: 
 const errors = [];
 const consoleError = console.error;
 console.error = (e) => errors.push(e);
-panel.send({ type: 'state', state: { ...state, usage: { ...state.usage, agents: null }, projectUsage: null }, root: '/p' });
-if (!errors.length) failures.push('panel: the broken usage data did not throw, so section isolation went untested');
-if (!panel.app.textContent.includes('Could not show this section')) failures.push('panel: a failing section shows no error');
-const fold = button(panel.app, 'Recent work');
-if (!fold) failures.push('panel: a failing section hid the rest of the panel');
-else {
-  const open = fold.textContent.startsWith('▾');
-  fold.click();
-  if (button(panel.app, 'Recent work').textContent.startsWith('▾') === open) failures.push('panel: Recent work stopped responding after a failing section');
+try {
+  panel.send({ type: 'state', state: { ...state, usage: { ...state.usage, agents: null }, projectUsage: null }, root: '/p' });
+  if (!errors.length) failures.push('panel: the broken usage data did not throw, so section isolation went untested');
+  if (!panel.app.textContent.includes('Could not show this section')) failures.push('panel: a failing section shows no error');
+  const fold = button(panel.app, 'Recent work');
+  if (!fold) failures.push('panel: a failing section hid the rest of the panel');
+  else {
+    const open = fold.textContent.startsWith('▾');
+    fold.click();
+    if (button(panel.app, 'Recent work').textContent.startsWith('▾') === open) failures.push('panel: Recent work stopped responding after a failing section');
+  }
+} finally {
+  console.error = consoleError;
 }
 panel.send({ type: 'state', state, root: '/p' });
 check('panel, recovered after a failing section', panel.app);
