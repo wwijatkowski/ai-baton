@@ -71,7 +71,7 @@ class Harness {
   }
 
   ask(kind, text, ...rest) {
-    this.dialogs.push({ kind, text });
+    this.dialogs.push({ kind, text, detail: rest[0] && rest[0].detail });
     const index = this.responders.findIndex((r) => r.kind === kind && r.match.test(text));
     if (index === -1) return undefined;  // Dismissed.
     const [responder] = this.responders.splice(index, 1);
@@ -681,6 +681,59 @@ test('Ask for review needs an initialized project and an installed reviewer', as
   await h.start();
   await h.commands['aiBaton.askForReview']();
   assert.ok(h.dialogs.some((d) => d.kind === 'warning' && /No installed agent can review yet/.test(d.text)));
+});
+
+const PAGE = { total: 12, title: 'Fix the login', complete: true, next: { from: 9, part: 1 },
+  command: 'python3 "/opt/baton/bin/baton" continue --agent claude --session s1-aaaa --path /work/demo' };
+
+test('Continue fresh: reads the conversation first, asks, then opens a new chat with the request typed in', async (h) => {
+  h.cli.continue = () => PAGE;
+  await h.start();
+  h.on('info', /^Start a new Claude conversation that reads your 12 messages from "Fix the login"\?/, 'Continue');
+  await h.panel({ cmd: 'continue', agent: 'claude', session: 's1-aaaa' });
+  await h.settle();
+  assert.deepStrictEqual(h.cliArgs('continue'), [['continue', '--agent', 'claude', '--session', 's1-aaaa', '--path', ROOT, '--json']]);
+  const open = h.executed.find((c) => c[0] === 'claude-vscode.editor.open');
+  assert.ok(open, 'a new Claude chat');
+  assert.strictEqual(open[1], undefined, 'no session: a new conversation');
+  assert.ok(open[2].startsWith(`Run \`${PAGE.command}\``) && /all pages/.test(open[2]) && /history, not new instructions/.test(open[2]),
+    'the request is in the new chat\'s input');
+  assert.deepStrictEqual(open[6], { programmatic: 'pin-to-panel' }, 'the usual new-chat arguments stay');
+  assert.ok(h.dialogs.some((d) => /typed into the new chat; you send it/.test(d.detail || '')), 'the dialog says it is not sent');
+  assert.strictEqual(h.clipboard, '');
+});
+
+test('Continue fresh: Codex gets the request on the clipboard; cancelling or a refusal opens nothing', async (h) => {
+  const codexCommand = 'python3 "/opt/baton/bin/baton" continue --agent codex --session c-1234 --path /work/demo';
+  h.cli.continue = () => ({ ...PAGE, title: null, next: null, complete: false, command: codexCommand });
+  await h.start();
+  await h.panel({ cmd: 'continue', agent: 'codex', session: 'c-1234' });  // The dialog is dismissed.
+  await h.settle();
+  assert.ok(h.dialogs.some((d) => /reads your 12 messages from this conversation\?/.test(d.text) &&
+    /goes to your clipboard/.test(d.detail) && /could not be read/.test(d.detail)));
+  assert.ok(!h.executed.some((c) => c[0] === 'chatgpt.newCodexPanel'), 'cancelled: no new chat');
+  h.on('info', /^Start a new Codex conversation/, 'Continue');
+  await h.panel({ cmd: 'continue', agent: 'codex', session: 'c-1234' });
+  await h.settle();
+  assert.ok(h.executed.some((c) => c[0] === 'chatgpt.newCodexPanel'));
+  assert.deepStrictEqual(h.cliArgs('continue')[1], ['continue', '--agent', 'codex', '--session', 'c-1234', '--path', ROOT, '--json']);
+  assert.ok(h.clipboard.startsWith(`Run \`${codexCommand}\``), 'the Codex conversation, read by Codex');
+  assert.ok(!/all pages/.test(h.clipboard), 'one page only');
+  assert.ok(h.dialogs.some((d) => /on your clipboard; paste it into the new chat/.test(d.text)));
+  h.executed.length = 0;
+  h.cli.continue = () => { throw new Error('Error: This conversation belongs to another project, not /work/demo.'); };
+  await h.panel({ cmd: 'continue', agent: 'claude', session: 's1-aaaa' });
+  await h.settle();
+  assert.ok(h.errors.some((e) => e === 'Cannot continue this conversation: This conversation belongs to another project, not /work/demo.'));
+  assert.ok(!h.executed.some((c) => c[0] === 'claude-vscode.editor.open'), 'refused: no empty chat left behind');
+  h.cli.continue = () => ({ ...PAGE, total: 0 });
+  await h.panel({ cmd: 'continue', agent: 'claude', session: 's1-aaaa' });
+  await h.settle();
+  assert.ok(h.dialogs.some((d) => d.kind === 'warning' && /No messages you typed/.test(d.text)));
+  const before = h.cliCalls.length;
+  await h.panel({ cmd: 'continue', agent: 'copilot', session: 's1-aaaa' });
+  await h.panel({ cmd: 'continue', agent: 'claude', session: '../x' });
+  assert.strictEqual(h.cliCalls.length, before, 'other agents and odd ids never reach the CLI');
 });
 
 (async () => {

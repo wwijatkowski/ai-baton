@@ -16,6 +16,7 @@
 - **Recent work.** Sessions that saved AI Baton checkpoints, newest first, with their summaries; reopen a conversation or start a review from one.
 - **Usage and limits.** Tokens per day per agent, for this project or all, and the plan limits each agent last reported.
 - **Context size.** Each agent card shows how much its conversations in this project re-read with every request, and suggests a fresh start or `/compact` when one passes half of the model's window.
+- **Continue fresh.** Starts a new Claude Code or Codex conversation that reads the messages you typed in an earlier one (your requests, corrections and decisions, not the agent's replies or tool output), so a large conversation can be left without retyping what you asked for. It runs `baton continue`, asks first, and puts the request in the new chat (Claude) or on your clipboard (Codex) for you to send.
 - **Agents at a glance.** Model and effort for new conversations, which agent is working, and a warning when memory hooks are missing or not yet approved.
 
 ### Ask for review
@@ -93,6 +94,7 @@ The memory hooks run locally: they never use the network or call a model. AI Bat
 ### Read only
 
 - Claude Code and Codex logs and transcripts, for token usage, session information and which program a conversation runs in: `~/.claude/projects/`, `~/.codex/sessions/`; Codex chat titles: `~/.codex/session_index.jsonl`.
+- With **Continue fresh** (or `baton continue`), the messages you typed in the one conversation you pick, from the same transcripts. Only text the agent marks as yours, with obvious secrets masked (best effort); the conversation must belong to this project. AI Baton keeps no copy, but the new conversation's own transcript does, and its agent sends them to its provider like anything else you type.
 - Copilot's session log of the chat whose turn just ended (`~/.copilot/session-state/<chat>/events.jsonl`), for its final answer, only when the Copilot hooks are installed.
 - Plan limits and models: `~/.claude.json`, `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.codex/models_cache.json`.
 

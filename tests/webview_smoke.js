@@ -186,6 +186,12 @@ if (openLogin.attrs['aria-label'] !== 'Open conversation: Fix the login' || !Str
 }
 openLogin.click();
 if (!panel.posted.some((m) => m.cmd === 'session' && m.agent === 'claude' && m.session === 's1-aaaaaaaa-bbbb')) failures.push('panel: Open on a chat does not open that conversation');
+const fresh = button(login, 'Continue fresh');
+if (!fresh || fresh.attrs['aria-label'] !== 'Continue fresh from: Fix the login' || !contextWarning().textContent.includes('or use Continue fresh')) {
+  failures.push('panel: a chat has no Continue fresh button, or the warning does not mention it');
+}
+fresh.click();
+if (!panel.posted.some((m) => m.cmd === 'continue' && m.agent === 'claude' && m.session === 's1-aaaaaaaa-bbbb')) failures.push('panel: Continue fresh does not send that conversation');
 button(contextWarning(), 'Dismiss').click();
 if (contextWarning() || !chat('Fix the login')) failures.push('panel: Dismiss did not hide only the warning');
 if (!button(panel.app, 'Recent work').textContent.startsWith('▾')) button(panel.app, 'Recent work').click();

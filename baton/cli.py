@@ -3,7 +3,7 @@ import argparse
 import json
 import sys
 
-from . import hook, hookcheck, init_project, mcp, models, project, recall, review, status, usage
+from . import continuation, hook, hookcheck, init_project, mcp, models, project, recall, review, status, usage
 
 
 def fmt(n):
@@ -68,6 +68,13 @@ def main(argv=None):
     p.add_argument('--agent')
     p.add_argument('--limit', type=int, default=5)
     p.add_argument('--full', action='store_true', help='print whole replies instead of snippets')
+    p.add_argument('--path', default='.')
+    p.add_argument('--json', action='store_true')
+    p = sub.add_parser('continue', help="the user's own messages from an earlier conversation, for a fresh one")
+    p.add_argument('--agent', required=True, help='the agent of that conversation: claude or codex')
+    p.add_argument('--session', required=True, help='its conversation id')
+    p.add_argument('--from', dest='start', type=int, default=1, help='first message to show (default 1)')
+    p.add_argument('--part', type=int, default=1, help='first part of that message, when it is long')
     p.add_argument('--path', default='.')
     p.add_argument('--json', action='store_true')
     p = sub.add_parser('models', help='model and effort each agent starts with')
@@ -171,6 +178,12 @@ def main(argv=None):
             print(json.dumps(hits, ensure_ascii=False))
         else:
             print('\n\n'.join(recall.render(s, args.words, args.full) for s in hits) or 'No matching checkpoints.')
+    elif args.command == 'continue':
+        try:
+            page = continuation.load(args.agent, args.session, args.path, args.start, args.part)
+        except continuation.ContinueError as error:
+            sys.exit(f'Error: {error}')
+        print(json.dumps(page, ensure_ascii=False) if args.json else continuation.render(page))
     elif args.command in ('models', 'set-model'):
         try:
             result = models.report() if args.command == 'models' else \

@@ -6,6 +6,7 @@
     "openCommand": "claude-vscode.sidebar.open",
     "newCommand": "claude-vscode.editor.open",
     "newArgs": [null, null, null, null, null, {"programmatic": "pin-to-panel"}],
+    "newPromptArg": 1,
     "hooks": "claude",
     "usage": "claude",
     "models": "claude",

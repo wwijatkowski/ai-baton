@@ -262,7 +262,7 @@ def claude_window(model):
     return CLAUDE_WINDOWS.get(DATED.match(model or '').group(1))
 
 
-def codex_titles():
+def codex_titles(limit=MAX_TITLE):
     """Codex chat titles by conversation id; the file is small and rewritten by Codex, so it is read each time.
     Anything damaged is skipped: a title is never worth losing the rest of the report."""
     titles = {}
@@ -277,7 +277,7 @@ def codex_titles():
                     continue
                 session, name = record.get('id'), record.get('thread_name')
                 if isinstance(session, str) and session and isinstance(name, str) and name.strip():
-                    titles[session] = name.strip()[:MAX_TITLE]  # Later lines are renames.
+                    titles[session] = name.strip()[:limit]  # Later lines are renames.
     except OSError:
         pass
     return titles
