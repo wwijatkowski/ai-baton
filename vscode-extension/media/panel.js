@@ -170,6 +170,8 @@
     codex: 'save state (checkpoint or handoff), then /new, or /compact',
   };
   const MAX_CONTEXTS = 3;
+  // Agents whose earlier messages `baton continue` reads into a fresh conversation.
+  const CONTINUABLE = new Set(['claude', 'codex']);
 
   // Context size of this agent's conversations in the project: the input of each one's last request. Each one is
   // named as in the agent's own chat list, and Open goes to exactly that chat.
@@ -191,7 +193,10 @@
         h('div', { class: 'chat-head' },
           h('span', { class: 'chat-title' }, name),
           agent.sessionUri && c.session && h('button', { class: 'link', onclick: () => send('session', { agent: agent.id, session: c.session }),
-            title: `Open this conversation in ${agent.label}`, 'aria-label': `Open conversation: ${name}` }, 'Open')),
+            title: `Open this conversation in ${agent.label}`, 'aria-label': `Open conversation: ${name}` }, 'Open'),
+          CONTINUABLE.has(agent.id) && c.session && h('button', { class: 'link', onclick: () => send('continue', { agent: agent.id, session: c.session }),
+            title: `Start a new ${agent.label} conversation that reads the messages you typed in this one (not tool output)`,
+            'aria-label': `Continue fresh from: ${name}` }, 'Continue fresh')),
         c.compacted
           ? h('div', { class: 'small muted' }, 'Context just compacted; its size shows after the next request.')
           : h('div', { class: 'meter', title: 'Input of the last request: what the model re-reads every turn' },
@@ -200,7 +205,8 @@
         h('div', { class: 'small muted' }, meta),
         warns(c) && h('div', { class: 'warning small' },
           h('span', null, `Every turn re-reads all ${fmt(c.tokens)} tokens, which costs tokens and time. ` +
-            `At a good stopping point, ${SHRINK[c.agent] || 'save state and start a fresh conversation'}.`),
+            `At a good stopping point, ${SHRINK[c.agent] || 'save state and start a fresh conversation'}` +
+            (CONTINUABLE.has(agent.id) && c.session ? ', or use Continue fresh: a new conversation that reads what you typed here.' : '.')),
           h('button', { class: 'link', onclick: () => { view.dismissed.add(key(c)); rerender(); }, title: 'Hide this warning until the panel reloads' }, 'Dismiss')));
     });
     const more = all.length - MAX_CONTEXTS;

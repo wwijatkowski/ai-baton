@@ -66,12 +66,30 @@ DATA_NOTICE = (
 )
 
 
+# A whole line that sets a credential, else a token of a known shape. One pass, so each replacement has one place.
+CREDENTIALS = re.compile(r'(?im:(?P<line>^.*(?:secret|password|passwd|token|api[_ -]?key)\s*[=:].*$))'
+                         r'|\b(?:sk-[\w-]{8,}|sb_secret_[\w-]+|gh[pousr]_\w{20,}|IGAA[\w-]+|eyJ[\w-]+\.[\w-]+\.[\w-]+)\b')
+
+
+def scrub(text, spans=None):
+    """Credential-like lines and tokens replaced, and how many were. Best effort, never a guarantee. `spans`, a list,
+    gets the (start, end) of each replacement in the result."""
+    pieces, last, at, count = [], 0, 0, 0
+    for found in CREDENTIALS.finditer(text):
+        marker = '[redacted credential line]' if found.group('line') is not None else '[redacted]'
+        pieces += [text[last:found.start()], marker]
+        at += found.start() - last
+        if spans is not None:
+            spans.append((at, at + len(marker)))
+        at += len(marker)
+        last = found.end()
+        count += 1
+    return ''.join(pieces) + text[last:], count
+
+
 def redact(text):
     # Best effort only: agents must never put credentials in their replies.
-    text = re.sub(r'(?im)^.*(?:secret|password|passwd|token|api[_ -]?key)\s*[=:].*$', '[redacted credential line]', text)
-    text = re.sub(r'\b(?:sk-[\w-]{8,}|sb_secret_[\w-]+|gh[pousr]_\w{20,}|IGAA[\w-]+|eyJ[\w-]+\.[\w-]+\.[\w-]+)\b',
-                  '[redacted]', text)
-    return text[:12000]
+    return scrub(text)[0][:12000]
 
 
 def parse_time(value):

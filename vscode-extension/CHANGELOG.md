@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Continue fresh** on each conversation in an agent's card: a new Claude Code or Codex conversation that reads the messages you typed in that one (not replies or tool output), after a confirmation. CLI: `baton continue --agent claude|codex --session <id>`: dated, paginated (`--from`, `--part`; long messages are split, never cut), secrets masked (best effort), with a report of what was left out (tool results, agent notes, rewound branches, images) and of any history it could not read. Only messages with a recorded human origin count; conversations of other projects, reviews and subagents are refused, and so are rolled-back Codex conversations for now.
+
 ## 0.5.2 (preview)
 
 - The panel no longer freezes when Claude reports a 5-hour window that has not started yet (no reset time): usage stayed at "Calculating usage…" and Recent work could not be opened. Such a window now shows "No reset time yet", and each panel section renders on its own, so one bad section cannot stop the rest.
