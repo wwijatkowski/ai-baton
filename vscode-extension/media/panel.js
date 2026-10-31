@@ -360,7 +360,9 @@
           h('div', { class: 'track' }, h('div', { class: 'fill', style: { width: pct + '%', background: fill } })),
           h('div', { class: 'small muted' }, (w.expired
             ? 'Window has already reset'
-            : `Resets ${reset.toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`) +
+            : reset  // Claude saves no reset time for a window that has not started yet.
+              ? `Resets ${reset.toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`
+              : 'No reset time yet') +
             (at ? ` · ${stale ? 'stale, ' : ''}read ${ago(at)}` : '')));
       }),
       live.size > 0 && h('div', { class: 'row' }, [...live].map((id) =>
@@ -373,13 +375,23 @@
   function render(state, root) {
     hideTip();
     app.replaceChildren(...[
-      header(state.status, root),
+      section(() => header(state.status, root)),
       state.error && h('p', { class: 'error' }, state.error),
-      agents(state.status, state.models, state.hooks, state.mcp),
-      recent(state.status),
-      docs(state.status),
-      usage(state),
+      section(() => agents(state.status, state.models, state.hooks, state.mcp)),
+      section(() => recent(state.status)),
+      section(() => docs(state.status)),
+      section(() => usage(state)),
     ].filter(Boolean));
+  }
+
+  // One section with unexpected data must not freeze the whole panel: a throw would stop every later render.
+  function section(build) {
+    try {
+      return build();
+    } catch (error) {
+      console.error(error);
+      return h('p', { class: 'error' }, `Could not show this section: ${error.message}`);
+    }
   }
 
   window.addEventListener('message', (event) => {

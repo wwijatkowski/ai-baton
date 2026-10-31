@@ -156,6 +156,14 @@ panel.send({ type: 'state', state: { ...state, hooks: null }, root: '/p' });
 check('panel, no hook info', panel.app);
 panel.send({ type: 'state', state: { ...state, status: { initialized: false, path: '/q', agents: [], hidden_agents: [] }, usage: null, projectUsage: null }, root: '/q' });
 check('panel, new folder', panel.app);
+// Claude saves no reset time for a 5-hour window that has not started: this once froze the whole panel.
+const unstarted = { ...state.usage, limits: { claude: { claude: { at: iso(5), primary: { used_percent: 0, resets_at: null, expired: false } } } } };
+panel.send({ type: 'state', state: { ...state, usage: unstarted, projectUsage: unstarted }, root: '/p' });
+check('panel, window not started', panel.app);
+if (!panel.app.textContent.includes('No reset time yet')) failures.push('panel: a window without a reset time is not shown');
+// A section that throws shows its own error; the rest of the panel still renders and responds.
+panel.send({ type: 'state', state: { ...state, usage: { ...state.usage, limits: { claude: { claude: { at: iso(5), primary: {} } } } }, projectUsage: null }, root: '/p' });
+if (!button(panel.app, 'Recent work')) failures.push('panel: a failing section hid the rest of the panel');
 
 const recent = load('recent.js');
 check('recent, loading', recent.app);
