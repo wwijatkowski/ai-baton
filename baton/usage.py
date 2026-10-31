@@ -4,7 +4,8 @@ Claude Code: ~/.claude/projects/**/*.jsonl  (per-message `usage`, deduplicated b
 Codex:       ~/.codex/sessions/**/rollout-*.jsonl  (`token_count` events + plan rate limits)
 
 Files are append-only, so the cache keeps a byte offset per file and parses only new lines.
-Each file also keeps its conversation's context size (input of its last request): numbers only, never message text.
+Each file also keeps its conversation's context size (input of its last request) and title: numbers and the title the
+agent shows for the chat, never message text. Codex keeps its titles in ~/.codex/session_index.jsonl.
 """
 import json
 import os
@@ -14,12 +15,15 @@ from pathlib import Path
 
 from .project import find_root, read_json, write_json
 
-CACHE = Path.home() / '.cache' / 'ai-baton' / 'usage-v2.json'  # v2: context sizes (needs a full re-parse).
+CACHE = Path.home() / '.cache' / 'ai-baton' / 'usage-v3.json'  # v3: context sizes, titles (needs a full re-parse).
 SOURCES = {
     'claude': (Path.home() / '.claude' / 'projects', '*.jsonl'),
     'codex': (Path.home() / '.codex' / 'sessions', 'rollout-*.jsonl'),
 }
 CLAUDE_CONFIG = Path.home() / '.claude.json'
+CODEX_TITLES = Path.home() / '.codex' / 'session_index.jsonl'
+MAX_TITLE = 120
+TITLE_KINDS = ('custom-title', 'ai-title')  # Claude's records; one the user gave wins.
 CODEX_KEYS = (b'"token_count"', b'"turn_context"', b'"session_meta"', b'"compacted"')
 FIELDS = ('input', 'cache_read', 'cache_write', 'output')
 CONTEXT_HOURS = 24  # Conversations whose last request is older are not shown in the context list.
@@ -58,7 +62,8 @@ def parse_claude(lines, entry):
     messages = entry.setdefault('messages', {})
     for line in lines:
         boundary = b'"compact_boundary"' in line
-        if b'"usage"' not in line and not boundary:
+        titled = b'"ai-title"' in line or b'"custom-title"' in line
+        if b'"usage"' not in line and not boundary and not titled:
             continue
         try:
             record = json.loads(line)
@@ -68,6 +73,12 @@ def parse_claude(lines, entry):
             continue
         if boundary and record.get('subtype') == 'compact_boundary':
             compacted(entry, record)
+            continue
+        if record.get('type') in ('ai-title', 'custom-title'):
+            # The chat's name in Claude's own list; one the user gave (custom) wins over the generated one.
+            title = record.get('customTitle') if record['type'] == 'custom-title' else record.get('aiTitle')
+            if isinstance(title, str) and title.strip():
+                entry.setdefault('context', {'compactions': 0})[record['type']] = title.strip()[:MAX_TITLE]
             continue
         message = record.get('message') or {}
         usage = message.get('usage')
@@ -191,6 +202,9 @@ def refresh_cache():
             files[key] = entry
     for key in set(files) - seen:
         files[key]['gone'] = True  # Keep history of rotated/archived logs.
+        # But not a deleted chat's title: no name outlives its transcript here (the numbers stay).
+        for kind in TITLE_KINDS:
+            (files[key].get('context') or {}).pop(kind, None)
     write_json(CACHE, cache, private=True)
     return cache
 
@@ -248,7 +262,52 @@ def claude_window(model):
     return CLAUDE_WINDOWS.get(DATED.match(model or '').group(1))
 
 
-def contexts(cache, inside=None, hours=CONTEXT_HOURS):
+def codex_titles():
+    """Codex chat titles by conversation id; the file is small and rewritten by Codex, so it is read each time.
+    Anything damaged is skipped: a title is never worth losing the rest of the report."""
+    titles = {}
+    try:
+        with open(CODEX_TITLES, encoding='utf-8', errors='replace') as stream:
+            for line in stream:
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                session, name = record.get('id'), record.get('thread_name')
+                if isinstance(session, str) and session and isinstance(name, str) and name.strip():
+                    titles[session] = name.strip()[:MAX_TITLE]  # Later lines are renames.
+    except OSError:
+        pass
+    return titles
+
+
+def chat_titles(cache):
+    """Every conversation's title and folder by its id, resolved once per report so all views agree. Claude: a title
+    the user gave beats a generated one; between copies of a resumed conversation, the one with the latest event."""
+    best = {}
+    for entry in cache['files'].values():
+        context = entry.get('context') or {}
+        session = context.get('session')
+        if not session or entry.get('gone') or entry['agent'] != 'claude':
+            continue
+        kind = next((k for k in TITLE_KINDS if context.get(k)), None)
+        if kind:
+            rank = (kind == 'custom-title', max(context.get('at', ''), context.get('compacted_at') or ''))
+            if session not in best or best[session][0] < rank:
+                best[session] = (rank, context[kind], context.get('cwd'))
+    found = {session: (title, cwd) for session, (_, title, cwd) in best.items()}
+    index = codex_titles()
+    for entry in cache['files'].values():
+        context = entry.get('context') or {}
+        session = context.get('session')
+        if entry['agent'] == 'codex' and session in index and not entry.get('gone'):
+            found[session] = (index[session], context.get('cwd'))
+    return found
+
+
+def contexts(cache, inside=None, hours=CONTEXT_HOURS, titles=None):
     """Context size of each conversation a person runs (no reviews, `claude -p`, `codex exec` or subagents) with a
     request in the last `hours`, newest first. `inside`: a filter on the conversation's folder. A window is only
     given when known and not exceeded (an id the table gets wrong)."""
@@ -271,6 +330,7 @@ def contexts(cache, inside=None, hours=CONTEXT_HOURS):
         key = (entry['agent'], context.get('session') or path)
         if key not in found or found[key][0] < last:
             found[key] = (last, at, entry['agent'], context)
+    titles = chat_titles(cache) if titles is None else titles
     shown = []
     for last, at, agent, context in found.values():
         if context.get('unattended') or last < since or (inside and not inside(context.get('cwd'))):
@@ -278,7 +338,8 @@ def contexts(cache, inside=None, hours=CONTEXT_HOURS):
         window = context.get('window') or (claude_window(context.get('model')) if agent == 'claude' else None)
         if window and context['tokens'] > window:
             window = None
-        shown.append({'agent': agent, 'session': context.get('session'), 'cwd': context.get('cwd') or '',
+        title = titles.get(context.get('session'), (None, None))[0]
+        shown.append({'agent': agent, 'session': context.get('session'), 'title': title, 'cwd': context.get('cwd') or '',
                       'model': context.get('model'), 'tokens': context['tokens'], 'window': window, 'at': at,
                       'compactions': context.get('compactions', 0), 'compacted': 'compacted_at' in context,
                       'last': last})
@@ -312,6 +373,7 @@ def summarize(days=30, project=None):
     inside = same(project)
     within = lambda cwd: not project or same(cwd) == inside or same(cwd).startswith(inside.rstrip(os.sep) + os.sep)
     roots, report = {}, {}
+    titles = chat_titles(cache)
     for agent, day, cwd, model, *values in iter_rows(cache):
         if day < start:
             continue
@@ -334,4 +396,5 @@ def summarize(days=30, project=None):
                                  key=lambda t: -(t['input'] + t['cache_write'] + t['output']))
     return {'generated_at': datetime.now(timezone.utc).isoformat(), 'days': days, 'project': project,
             'agents': report, 'limits': {'claude': claude_limits(), 'codex': latest_limits(cache)},
-            'contexts': contexts(cache, within)}
+            'contexts': contexts(cache, within, titles=titles),
+            'titles': {session: title for session, (title, cwd) in titles.items() if within(cwd)}}

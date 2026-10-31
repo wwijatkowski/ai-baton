@@ -161,34 +161,51 @@ const unstarted = { ...state.usage, limits: { claude: { claude: { at: iso(5), pr
 panel.send({ type: 'state', state: { ...state, usage: unstarted, projectUsage: unstarted }, root: '/p' });
 check('panel, window not started', panel.app);
 if (!panel.app.textContent.includes('No reset time yet')) failures.push('panel: a window without a reset time is not shown');
-// Context size per conversation on the agent's card: a warning past the threshold, which can be dismissed.
-const context = (c) => ({ agent: 'claude', session: 's1-aaaaaaaa-bbbb', model: 'opus', tokens: 600000, window: 1000000, at: iso(3), compactions: 0, compacted: false, ...c });
-const withContexts = (list, contextWarning = 50) => ({ ...state, contextWarning, projectUsage: { ...state.usage, contexts: list } });
+// Context size per conversation on the agent's card: named as in the agent's chat list, a warning past the threshold
+// (which can be dismissed), and the same names in Recent work.
+const context = (c) => ({ agent: 'claude', session: 's1-aaaaaaaa-bbbb', title: 'Fix the login', model: 'opus', tokens: 600000, window: 1000000, at: iso(3), compactions: 0, compacted: false, ...c });
+const withContexts = (list, contextWarning = 50, titles = {}) => ({ ...state, contextWarning, projectUsage: { ...state.usage, contexts: list, titles } });
 const claudeCard = () => panel.app.all().find((e) => e.className === 'card' && e.textContent.includes('Claude'));
+const chat = (name) => claudeCard().all().find((e) => e.className === 'chat' && e.textContent.includes(name));
 const contextWarning = () => panel.app.all().find((e) => e.className === 'warning small' && e.textContent.includes('re-reads'));
-panel.send({ type: 'state', state: withContexts([context(), context({ session: 's2-cccccccc-dddd', tokens: 100000 }), context({ agent: 'codex', session: 'c' })]), root: '/p' });
+panel.send({ type: 'state', state: withContexts([context(), context({ session: 's2-cccccccc-dddd', title: null, tokens: 100000 }), context({ agent: 'codex', session: 'c' })],
+  50, { 'abc-1': 'Fix the login' }), root: '/p' });
 check('panel, large context', panel.app);
-if (!contextWarning() || !contextWarning().textContent.includes('600k of 1.0M (60%)') || !contextWarning().textContent.includes('/clear')) {
-  failures.push('panel: no context warning with the size and what to do');
+const login = chat('Fix the login');
+if (!login || !login.textContent.includes('Context 600k of 1.0M') || !login.textContent.includes('60%') || !contextWarning() || !contextWarning().textContent.includes('/clear')) {
+  failures.push('panel: no named chat with its size and a warning saying what to do');
 }
-if (!claudeCard().textContent.includes('Chat s2-ccccc: last request read 100k of 1.0M (10%)')) failures.push('panel: a small context is not shown on the card with its chat');
+if (!chat('Chat s2-ccccc') || !chat('Chat s2-ccccc').textContent.includes('Context 100k of 1.0M')) failures.push('panel: a chat without a title is not shown by its short id');
 if (panel.app.all().filter((e) => e.className === 'warning small' && e.textContent.includes('re-reads')).length !== 1) {
   failures.push('panel: a context warning shown for a small context or a hidden agent');
 }
+panel.posted.length = 0;
+const openLogin = button(login, 'Open');
+if (openLogin.attrs['aria-label'] !== 'Open conversation: Fix the login' || !String(login.attrs.title).startsWith('Fix the login\n')) {
+  failures.push('panel: a chat\'s Open button or tooltip does not name the chat');
+}
+openLogin.click();
+if (!panel.posted.some((m) => m.cmd === 'session' && m.agent === 'claude' && m.session === 's1-aaaaaaaa-bbbb')) failures.push('panel: Open on a chat does not open that conversation');
 button(contextWarning(), 'Dismiss').click();
-if (contextWarning() || !claudeCard().textContent.includes('Chat s1-aaaaa: last request read 600k of 1.0M (60%)')) failures.push('panel: Dismiss did not turn the warning into a plain line');
+if (contextWarning() || !chat('Fix the login')) failures.push('panel: Dismiss did not hide only the warning');
+if (!button(panel.app, 'Recent work').textContent.startsWith('▾')) button(panel.app, 'Recent work').click();
+if (!panel.app.all().some((e) => e.className === 'entry' && e.all().some((c) => c.className === 'chat-title' && c.textContent === 'Fix the login'))) {
+  failures.push('panel: Recent work does not name the chat of an entry');
+}
 panel.send({ type: 'state', state: withContexts([context({ session: 's3' })], 0), root: '/p' });
 if (contextWarning()) failures.push('panel: context warning shown although turned off');
 panel.send({ type: 'state', state: withContexts([context({ session: 's4', window: null, tokens: 300000 })]), root: '/p' });
-if (contextWarning() || !/last request read 300k · \d+ min ago · opus/.test(claudeCard().textContent)) failures.push('panel: unknown window not shown as a plain number');
+if (contextWarning() || !chat('Fix the login').textContent.includes('Context 300k') || chat('Fix the login').all().some((e) => e.className === 'track')) {
+  failures.push('panel: unknown window not shown as a plain number');
+}
 panel.send({ type: 'state', state: withContexts([context({ session: 's5', compacted: true, compactions: 2 })]), root: '/p' });
 if (contextWarning() || !claudeCard().textContent.includes('just compacted') || !claudeCard().textContent.includes('compacted 2×')) {
   failures.push('panel: a just compacted conversation is not shown as such');
 }
-panel.send({ type: 'state', state: withContexts([1, 2, 3, 4, 5].map((n) => context({ session: `n${n}`, tokens: 1000 }))), root: '/p' });
-if (!claudeCard().textContent.includes('+2 more conversations') || claudeCard().textContent.includes('Chat n4')) failures.push('panel: more than three conversations not summarized');
-panel.send({ type: 'state', state: withContexts([1, 2, 3, 4].map((n) => context({ session: `big${n}`, tokens: n === 4 ? 900000 : 1000 }))), root: '/p' });
-if (!contextWarning() || !contextWarning().textContent.includes('Chat big4')) failures.push('panel: a large older conversation hidden behind "+N more"');
+panel.send({ type: 'state', state: withContexts([1, 2, 3, 4, 5].map((n) => context({ session: `n${n}`, title: `T${n}`, tokens: 1000 }))), root: '/p' });
+if (!claudeCard().textContent.includes('+2 more conversations') || chat('T4')) failures.push('panel: more than three conversations not summarized');
+panel.send({ type: 'state', state: withContexts([1, 2, 3, 4].map((n) => context({ session: `big${n}`, title: `B${n}`, tokens: n === 4 ? 900000 : 1000 }))), root: '/p' });
+if (!contextWarning() || !chat('B4')) failures.push('panel: a large older conversation hidden behind "+N more"');
 // A section that throws shows its own error; the rest of the panel still renders and responds.
 const errors = [];
 const consoleError = console.error;
@@ -214,8 +231,9 @@ if (panel.app.textContent.includes('Could not show this section')) failures.push
 const recent = load('recent.js');
 check('recent, loading', recent.app);
 const agents = [{ id: 'claude', label: 'Claude', shown: true, sessions: true }, { id: 'codex', label: 'Codex', shown: false }];
-recent.send({ type: 'recent', data: { name: 'p', sessions, agents, canReview: true } });
+recent.send({ type: 'recent', data: { name: 'p', sessions: sessions.map((e, i) => ({ ...e, title: i ? null : 'Fix the login' })), agents, canReview: true } });
 check('recent', recent.app);
+if (!recent.app.all().some((e) => e.className === 'chat-title' && e.textContent === 'Fix the login')) failures.push('recent: an entry does not show its chat title');
 button(recent.app, '5 replies').click();
 if (!button(recent.app, 'Open session')) failures.push('recent: no "Open session" button');
 if (!button(recent.app, 'Ask for review')) failures.push('recent: no "Ask for review" button');
@@ -226,6 +244,9 @@ const search = recent.app.all().find((e) => e.tag === 'input');
 search.value = 'nothing like this';
 search.listeners.input.forEach((fn) => fn({ target: search }));
 if (!recent.app.textContent.includes('No sessions match')) failures.push('recent: search did not filter');
+search.value = 'fix the LOGIN';
+search.listeners.input.forEach((fn) => fn({ target: search }));
+if (!recent.app.textContent.includes('Built the thing')) failures.push('recent: search does not find a chat by its title');
 search.value = 'built';
 search.listeners.input.forEach((fn) => fn({ target: search }));
 if (!recent.app.textContent.includes('Built the thing')) failures.push('recent: search lost a match');

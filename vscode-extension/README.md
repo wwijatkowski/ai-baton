@@ -82,7 +82,7 @@ The memory hooks run locally: they never use the network or call a model. AI Bat
 
 ### Automatically, when the extension starts
 
-- `~/.ai-baton/`: the bundled command-line tool. `~/.cache/ai-baton/`: cached results.
+- `~/.ai-baton/`: the bundled command-line tool. `~/.cache/ai-baton/` (readable only by you): cached results, i.e. token counts per day and per conversation, and Claude chat titles, which are removed when their transcript is deleted.
 
 ### After you agree in the panel
 
@@ -92,7 +92,7 @@ The memory hooks run locally: they never use the network or call a model. AI Bat
 
 ### Read only
 
-- Claude Code and Codex logs and transcripts, for token usage, session information and which program a conversation runs in: `~/.claude/projects/`, `~/.codex/sessions/`.
+- Claude Code and Codex logs and transcripts, for token usage, session information and which program a conversation runs in: `~/.claude/projects/`, `~/.codex/sessions/`; Codex chat titles: `~/.codex/session_index.jsonl`.
 - Copilot's session log of the chat whose turn just ended (`~/.copilot/session-state/<chat>/events.jsonl`), for its final answer, only when the Copilot hooks are installed.
 - Plan limits and models: `~/.claude.json`, `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.codex/models_cache.json`.
 

@@ -171,7 +171,8 @@
   };
   const MAX_CONTEXTS = 3;
 
-  // Context size of this agent's conversations in the project: the input of each one's last request.
+  // Context size of this agent's conversations in the project: the input of each one's last request. Each one is
+  // named as in the agent's own chat list, and Open goes to exactly that chat.
   function contexts(agent, state) {
     const scoped = state.projectUsage || state.usage;
     const limit = Number(state.contextWarning) || 0;
@@ -182,22 +183,33 @@
     const list = ((scoped && scoped.contexts) || []).filter((c) => c.agent === agent.id);
     const all = list.filter(warns).concat(list.filter((c) => !warns(c)));
     const rows = all.slice(0, MAX_CONTEXTS).map((c) => {
-      // A short id tells similar conversations apart; the full one is in the tooltip.
-      const who = c.session ? `Chat ${String(c.session).slice(0, 8)}` : 'Chat';
-      const title = [c.session && `Conversation ${c.session}`, c.cwd].filter(Boolean).join('\n');
-      const meta = [c.model, c.compactions && `compacted ${c.compactions}×`].filter(Boolean).join(' · ');
-      if (c.compacted) {
-        return h('div', { class: 'small muted', title }, `${who}: context just compacted; its size shows after the next request · ${meta}`);
-      }
-      const size = `${who}: last request read ${fmt(c.tokens)}${c.window ? ` of ${fmt(c.window)} (${share(c)}%)` : ''} · ${ago(c.at)}${meta ? ' · ' + meta : ''}`;
-      if (!warns(c)) return h('div', { class: 'small muted', title }, size);
-      return h('div', { class: 'warning small', title },
-        h('span', null, `${size}. Every turn re-reads all of it, which costs tokens and time. ` +
-          `At a good stopping point, ${SHRINK[c.agent] || 'save state and start a fresh conversation'}.`),
-        h('button', { class: 'link', onclick: () => { view.dismissed.add(key(c)); rerender(); }, title: 'Hide this warning until the panel reloads' }, 'Dismiss'));
+      const pct = share(c);
+      const meta = [c.model, ago(c.at), c.compactions && `compacted ${c.compactions}×`].filter(Boolean).join(' · ');
+      const fill = pct >= 90 ? 'var(--bad)' : warns(c) || (limit && pct >= limit) ? 'var(--warn)' : 'var(--ok)';
+      const name = chatName(c.title, c.session);
+      return h('div', { class: 'chat', title: [c.title, c.session && `Conversation ${c.session}`, c.cwd].filter(Boolean).join('\n') },
+        h('div', { class: 'chat-head' },
+          h('span', { class: 'chat-title' }, name),
+          agent.sessionUri && c.session && h('button', { class: 'link', onclick: () => send('session', { agent: agent.id, session: c.session }),
+            title: `Open this conversation in ${agent.label}`, 'aria-label': `Open conversation: ${name}` }, 'Open')),
+        c.compacted
+          ? h('div', { class: 'small muted' }, 'Context just compacted; its size shows after the next request.')
+          : h('div', { class: 'meter', title: 'Input of the last request: what the model re-reads every turn' },
+            h('div', { class: 'top' }, h('span', null, `Context ${fmt(c.tokens)}${c.window ? ` of ${fmt(c.window)}` : ''}`), h('span', null, pct === null ? '' : `${pct}%`)),
+            pct !== null && h('div', { class: 'track' }, h('div', { class: 'fill', style: { width: Math.min(100, pct) + '%', background: fill } }))),
+        h('div', { class: 'small muted' }, meta),
+        warns(c) && h('div', { class: 'warning small' },
+          h('span', null, `Every turn re-reads all ${fmt(c.tokens)} tokens, which costs tokens and time. ` +
+            `At a good stopping point, ${SHRINK[c.agent] || 'save state and start a fresh conversation'}.`),
+          h('button', { class: 'link', onclick: () => { view.dismissed.add(key(c)); rerender(); }, title: 'Hide this warning until the panel reloads' }, 'Dismiss')));
     });
     const more = all.length - MAX_CONTEXTS;
     return more > 0 ? rows.concat(h('div', { class: 'small muted' }, `+${more} more ${more === 1 ? 'conversation' : 'conversations'} in the last 24 h`)) : rows;
+  }
+
+  // The chat's title as the agent lists it, else a short id (the full one is in the tooltip).
+  function chatName(title, session) {
+    return title || (session ? `Chat ${String(session).slice(0, 8)}` : 'Chat');
   }
 
   function agents(st, models, hooks, mcp, state) {
@@ -247,8 +259,9 @@
       : h('button', { onclick: () => send('open', { agent: agent.id }) }, `Open ${agent.label}`);
   }
 
-  function recent(st) {
+  function recent(st, usage) {
     const items = (st && st.recent) || [];
+    const titles = (usage && usage.titles) || {};
     if (!items.length) return null;
     const labels = Object.fromEntries((st.agents.concat(st.hidden_agents || [])).map((a) => [a.id, a.label]));
     const index = Object.fromEntries(st.agents.map((a, i) => [a.id, i]));
@@ -265,6 +278,7 @@
             h('span', { class: 'dot', style: { background: color(e.agent, index[e.agent] || 0) } }),
             h('span', { class: 'who' }, labels[e.agent] || e.agent),
             h('span', { class: 'small muted when' }, ago(e.saved_at)),
+            titles[e.session_id] && h('span', { class: 'chat-title', title: titles[e.session_id] }, titles[e.session_id]),
             h('span', { class: open ? 'text' : 'text clamp' }, plain(e.summary) || '(no summary)')),
           open && h('div', { class: 'row detail small muted' },
             `${e.turns} ${e.turns === 1 ? 'reply' : 'replies'}${e.commit ? ' · @ ' + e.commit : ''}${e.handoff_updated ? ' · updated handoff' : ''}`),
@@ -415,7 +429,7 @@
       section(() => header(state.status, root)),
       state.error && h('p', { class: 'error' }, state.error),
       section(() => agents(state.status, state.models, state.hooks, state.mcp, state)),
-      section(() => recent(state.status)),
+      section(() => recent(state.status, state.projectUsage || state.usage)),
       section(() => docs(state.status)),
       section(() => usage(state)),
     ].filter(Boolean));

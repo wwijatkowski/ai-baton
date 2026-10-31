@@ -951,7 +951,9 @@ async function loadRecent() {
   } else try {
     const result = JSON.parse(await baton(['recent', '--json', status.root]));
     const shown = new Set(status.agents.map((a) => a.id));
-    data = { name: status.name, sessions: result.sessions, canReview: status.agents.some((a) => a.review && isInstalled(a)),
+    // Chat titles as the agents list them (from the usage report), so entries match the open chats.
+    const titles = (state.projectUsage && state.projectUsage.titles) || {};
+    data = { name: status.name, sessions: result.sessions.map((e) => ({ ...e, title: titles[e.session_id] || null })), canReview: status.agents.some((a) => a.review && isInstalled(a)),
       agents: [...status.agents, ...(status.hidden_agents || [])]
         .map((a) => ({ id: a.id, label: a.label, shown: shown.has(a.id), sessions: !!a.sessionUri })) };
   } catch (error) {

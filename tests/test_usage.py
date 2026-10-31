@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -50,7 +51,8 @@ class ContextTest(unittest.TestCase):
         patches = [mock.patch.object(usage, 'SOURCES', {'claude': (self.claude, '*.jsonl'),
                                                          'codex': (self.codex, 'rollout-*.jsonl')}),
                    mock.patch.object(usage, 'CACHE', self.tmp / 'cache.json'),
-                   mock.patch.object(usage, 'CLAUDE_CONFIG', self.tmp / 'none.json')]
+                   mock.patch.object(usage, 'CLAUDE_CONFIG', self.tmp / 'none.json'),
+                   mock.patch.object(usage, 'CODEX_TITLES', self.tmp / 'session_index.jsonl')]
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
@@ -170,6 +172,55 @@ class ContextTest(unittest.TestCase):
         # No window for an unknown model, nor for one past its table entry (the table must be wrong then).
         self.assertEqual(windows, {'c1': None, 'b': None, 'c': 1_000_000})
         self.assertEqual({c['session'] for c in self.contexts(project=P)}, {'c1', 'b'})
+
+    def test_chat_titles(self):
+        # Claude: the generated title, replaced by one the user gave; Codex: its index, where later lines are renames.
+        self.write(self.claude / '-work-p' / 'c1.jsonl', [
+            claude_call(10, 'm1', 1, 1000), {'type': 'ai-title', 'aiTitle': 'Generated', 'sessionId': 'c1'}])
+        self.assertEqual([c['title'] for c in self.contexts()], ['Generated'])
+        self.write(self.claude / '-work-p' / 'c1.jsonl', [{'type': 'custom-title', 'customTitle': ' Mine ', 'sessionId': 'c1'},
+                                                          {'type': 'ai-title', 'aiTitle': 'Newer', 'sessionId': 'c1'}], 'a')
+        self.assertEqual([c['title'] for c in self.contexts()], ['Mine'])
+        self.write(self.codex / '2026' / 'rollout-a.jsonl', codex_meta('x1') + [codex_tokens(5, 2000, 2000)])
+        self.write(self.tmp / 'session_index.jsonl', [{'id': 'x1', 'thread_name': 'First'}, {'id': 'x1', 'thread_name': 'Renamed'}])
+        report = usage.summarize(days=7, project=P)
+        self.assertEqual({c['session']: c['title'] for c in report['contexts']}, {'c1': 'Mine', 'x1': 'Renamed'})
+        self.assertEqual(report['titles'], {'c1': 'Mine', 'x1': 'Renamed'})
+        self.assertEqual(usage.summarize(days=7, project=Q)['titles'], {})
+
+    def test_titles_agree_across_copies_in_any_order(self):
+        older = [claude_call(30, 'm1', 1, 1000), {'type': 'ai-title', 'aiTitle': 'Old name', 'sessionId': 'c1'}]
+        newer = older + [claude_call(10, 'm2', 1, 2000), {'type': 'ai-title', 'aiTitle': 'New name', 'sessionId': 'c1'}]
+        renamed = older + [{'type': 'custom-title', 'customTitle': 'Mine', 'sessionId': 'c1'}]  # A rename, no request.
+        for second, expected in ((newer, 'New name'), (renamed, 'Mine')):
+            for names in (('a', 'b'), ('b', 'a')):
+                with self.subTest(expected=expected, order=names):
+                    shutil.rmtree(self.claude, ignore_errors=True)
+                    (self.tmp / 'cache.json').unlink(missing_ok=True)
+                    self.write(self.claude / '-work-p' / f'{names[0]}.jsonl', older)
+                    self.write(self.claude / '-work-p' / f'{names[1]}.jsonl', second)
+                    report = usage.summarize(days=7, project=P)
+                    self.assertEqual(([c['title'] for c in report['contexts']], report['titles']), ([expected], {'c1': expected}))
+
+    def test_title_goes_with_its_transcript(self):
+        transcript = self.claude / '-work-p' / 'c1.jsonl'
+        self.write(transcript, [claude_call(10, 'm1', 1, 1000), {'type': 'ai-title', 'aiTitle': 'Private', 'sessionId': 'c1'}])
+        self.assertEqual(usage.summarize(days=7)['titles'], {'c1': 'Private'})
+        if os.name != 'nt':
+            self.assertEqual((self.tmp / 'cache.json').stat().st_mode & 0o777, 0o600)
+        transcript.unlink()
+        report = usage.summarize(days=7)
+        self.assertEqual(report['titles'], {})
+        self.assertNotIn('Private', (self.tmp / 'cache.json').read_text())
+        self.assertEqual(report['agents']['claude']['today']['cache_read'], 1000)  # The numbers stay.
+
+    def test_damaged_codex_index(self):
+        self.write(self.codex / '2026' / 'rollout-a.jsonl', codex_meta('x1') + [codex_tokens(5, 2000, 2000)])
+        (self.tmp / 'session_index.jsonl').write_bytes(
+            b'\xff\xfe not utf-8\n{"id": ["x1"], "thread_name": "list id"}\n{"id": "x1", "thread_name": 7}\n[1]\n'
+            b'{"id": "x1", "thread_name": "Good"}\n{"id": "x1", "thread_na')
+        report = usage.summarize(days=7)
+        self.assertEqual((report['titles'], report['agents']['codex']['today']['input']), ({'x1': 'Good'}, 2000))
 
     def test_claude_window_table(self):
         self.assertEqual(usage.claude_window('claude-haiku-4-5'), 200_000)
