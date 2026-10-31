@@ -17,7 +17,6 @@ One place to switch between coding agents on a project without losing context or
 
 ## In progress
 - Dogfooding AI Baton on this repo.
-- Removing private data from committed bench transcripts (redact, rewrite history; waits for the user's approval).
 - Antigravity via MCP: server verified, client not yet.
 - Next feature: context-size indicator and `/clear` suggestion in the panel.
 

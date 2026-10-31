@@ -5,8 +5,9 @@ A short, current state of the work for the next agent. Replace outdated content;
 **Last updated:** 2026-10-31, Claude
 
 ## Now (2026-10-31)
-- Privacy: raw Codex transcripts committed under `bench/frozen*/` (pilots 2, 3, 3b) contain the user's private global settings (Codex system prompt). No credentials, but they must leave the public repo: redact the files, rewrite history and force-push, after the user approves. Until then do not merge PR #13. `bench/run.py` must redact rollouts before copying them (lines with `a-transcript.jsonl`). User rule: nothing private may ever reach this public repo; check every diff, including archives and bundles, before committing.
-- Ideas reviewed (see DECISIONS 2026-10-31): next feature is a context-size indicator per active session in the panel, with a warning that suggests saving and `/clear`. Shared chat deferred; gateway is agent configuration, not an AI Baton feature.
+- Privacy cleanup done: Codex transcripts under `bench/frozen*/` contained the user's private settings (Codex system prompt; no credentials). History rewritten from the first affected commit and force-pushed (main, bench-pilot2, handoff-requirements; tags untouched); `bench/redact.py` now strips agent configuration before a rollout is saved. GitHub Support was asked to drop cached views of the old commits (pending). A local pre-commit/pre-push guard with a private word list (outside the repo) blocks such leaks. User rule: nothing private may ever reach this public repo; check every diff, including archives and bundles.
+- 0.5.2 prepared (branch `release-0.5.2`): panel froze when Claude reported a limit window without a reset time (fixed, PR #14) + the requirements rule (PR #13). Codex review before the release was requested by the user.
+- Next feature (DECISIONS 2026-10-31): a context-size indicator per active session in the panel, with a warning that suggests saving and `/clear`. Shared chat deferred; gateway is agent configuration, not an AI Baton feature.
 - Antigravity (Google) as a user agent: a local MCP config (`.agents/`, machine-specific, never commit) starts `baton mcp --agent antigravity`; server handshake verified, real client load/save not yet. `baton review` supports Claude/Codex only.
 
 ## Current state
@@ -37,7 +38,7 @@ Releasing (no stored tokens, see 1): bump the version and add a CHANGELOG sectio
 4. Listing (0.4.1, released): display name "AI Baton: Claude Code & Codex memory, handoff, review" for Marketplace search (it weighs the name most; the id stays, so it can go back to "AI Baton" any time), wider keywords, Cursor/Windsurf via Open VSX in the description. The README starts with `media/screenshots/demo.gif` (33 s, 1.6 MB): recorded by Claude desktop with `screencapture -v` in a throwaway project, cut and sped up with ffmpeg; the raw video is `~/Movies/ai-baton-demo.mov`.
 5. Done: 0.5.0 released; Copilot hooks built on `copilot-hooks`.
 6. Done 2026-10-28: 0.5.1 released.
-7. Next: merge `handoff-requirements` (the AGENTS.md rule reaches projects when they run Initialize project again; release it with the next version). Then the README benefits section: lead with memory/continuity; one bounded statement from `bench/results/*-pilot3b/SUMMARY.md` (small sample, one direction, completions not token savings). A stronger claim needs more tasks and the Claude-to-Codex direction.
+7. Done: the requirements rule merged (PR #13), ships in 0.5.2. Next: the README benefits section: lead with memory/continuity; one bounded statement from `bench/results/*-pilot3b/SUMMARY.md` (small sample, one direction, completions not token savings). A stronger claim needs more tasks and the Claude-to-Codex direction.
 
 ## How we work (user's preferences)
 - Reply in Polish; docs in English. Ask before outward or destructive actions (pushes to other repos, history rewrites, deleting memory).
