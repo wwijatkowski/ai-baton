@@ -304,6 +304,7 @@ async function refreshUsage() {
   } catch (error) {
     output.appendLine(`usage: ${error.message}`);
   }
+  state.contextWarning = config('contextWarning');
   state.loading = false;
   render();
 }

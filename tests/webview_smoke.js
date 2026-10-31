@@ -161,6 +161,34 @@ const unstarted = { ...state.usage, limits: { claude: { claude: { at: iso(5), pr
 panel.send({ type: 'state', state: { ...state, usage: unstarted, projectUsage: unstarted }, root: '/p' });
 check('panel, window not started', panel.app);
 if (!panel.app.textContent.includes('No reset time yet')) failures.push('panel: a window without a reset time is not shown');
+// Context size per conversation on the agent's card: a warning past the threshold, which can be dismissed.
+const context = (c) => ({ agent: 'claude', session: 's1-aaaaaaaa-bbbb', model: 'opus', tokens: 600000, window: 1000000, at: iso(3), compactions: 0, compacted: false, ...c });
+const withContexts = (list, contextWarning = 50) => ({ ...state, contextWarning, projectUsage: { ...state.usage, contexts: list } });
+const claudeCard = () => panel.app.all().find((e) => e.className === 'card' && e.textContent.includes('Claude'));
+const contextWarning = () => panel.app.all().find((e) => e.className === 'warning small' && e.textContent.includes('re-reads'));
+panel.send({ type: 'state', state: withContexts([context(), context({ session: 's2-cccccccc-dddd', tokens: 100000 }), context({ agent: 'codex', session: 'c' })]), root: '/p' });
+check('panel, large context', panel.app);
+if (!contextWarning() || !contextWarning().textContent.includes('600k of 1.0M (60%)') || !contextWarning().textContent.includes('/clear')) {
+  failures.push('panel: no context warning with the size and what to do');
+}
+if (!claudeCard().textContent.includes('Chat s2-ccccc: last request read 100k of 1.0M (10%)')) failures.push('panel: a small context is not shown on the card with its chat');
+if (panel.app.all().filter((e) => e.className === 'warning small' && e.textContent.includes('re-reads')).length !== 1) {
+  failures.push('panel: a context warning shown for a small context or a hidden agent');
+}
+button(contextWarning(), 'Dismiss').click();
+if (contextWarning() || !claudeCard().textContent.includes('Chat s1-aaaaa: last request read 600k of 1.0M (60%)')) failures.push('panel: Dismiss did not turn the warning into a plain line');
+panel.send({ type: 'state', state: withContexts([context({ session: 's3' })], 0), root: '/p' });
+if (contextWarning()) failures.push('panel: context warning shown although turned off');
+panel.send({ type: 'state', state: withContexts([context({ session: 's4', window: null, tokens: 300000 })]), root: '/p' });
+if (contextWarning() || !/last request read 300k · \d+ min ago · opus/.test(claudeCard().textContent)) failures.push('panel: unknown window not shown as a plain number');
+panel.send({ type: 'state', state: withContexts([context({ session: 's5', compacted: true, compactions: 2 })]), root: '/p' });
+if (contextWarning() || !claudeCard().textContent.includes('just compacted') || !claudeCard().textContent.includes('compacted 2×')) {
+  failures.push('panel: a just compacted conversation is not shown as such');
+}
+panel.send({ type: 'state', state: withContexts([1, 2, 3, 4, 5].map((n) => context({ session: `n${n}`, tokens: 1000 }))), root: '/p' });
+if (!claudeCard().textContent.includes('+2 more conversations') || claudeCard().textContent.includes('Chat n4')) failures.push('panel: more than three conversations not summarized');
+panel.send({ type: 'state', state: withContexts([1, 2, 3, 4].map((n) => context({ session: `big${n}`, tokens: n === 4 ? 900000 : 1000 }))), root: '/p' });
+if (!contextWarning() || !contextWarning().textContent.includes('Chat big4')) failures.push('panel: a large older conversation hidden behind "+N more"');
 // A section that throws shows its own error; the rest of the panel still renders and responds.
 const errors = [];
 const consoleError = console.error;
