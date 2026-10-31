@@ -9,3 +9,4 @@ node_modules/
 /docs
 /bench
 /.baton.json
+/CLAUDE.local.md
