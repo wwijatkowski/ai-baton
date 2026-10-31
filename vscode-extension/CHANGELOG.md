@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.5.3 (preview)
 
-- **Continue fresh** on each conversation in an agent's card: a new Claude Code or Codex conversation that reads the messages you typed in that one (not replies or tool output), after a confirmation. CLI: `baton continue --agent claude|codex --session <id>`: dated, paginated (`--from`, `--part`; long messages are split, never cut), secrets masked (best effort), with a report of what was left out (tool results, agent notes, rewound branches, images) and of any history it could not read. Only messages with a recorded human origin count; conversations of other projects, reviews and subagents are refused, and so are rolled-back Codex conversations for now.
+- **Context size** on the Claude Code and Codex cards: the project's conversations from the last 24 hours, named as the agent lists them (with **Open** for that exact chat), each with the input of its last request (what it re-reads every turn), the model, its age and how often it was compacted. When the model's window is known it also shows the share of it ("Context X of Y"); right after a compaction the size returns with the next request. Past `aiBaton.contextWarning` (default 50%, 0 turns it off) it suggests what to do at a good stopping point, with **Dismiss**. Recent work shows the same chat titles. Titles are read locally from the agents' own files and dropped when the transcript is deleted.
+- **Continue fresh** on each conversation in an agent's card: a new Claude Code or Codex conversation that reads the messages you typed in that one (not replies or tool output), after a confirmation. The request to read them is typed into Claude's input or copied for Codex; you send it. CLI: `baton continue --agent claude|codex --session <id>`: dated, paginated (`--from`, `--part`; long messages are split, never cut), secrets masked (best effort), with a report of what was left out (tool results, agent notes, rewound branches, images) and of any history it could not read. Only messages with a recorded human origin count; conversations of other projects, reviews and subagents are refused, and so are rolled-back Codex conversations for now.
 
 ## 0.5.2 (preview)
 
