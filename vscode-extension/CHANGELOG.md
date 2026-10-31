@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.2 (preview)
+
+- The panel no longer freezes when Claude reports a 5-hour window that has not started yet (no reset time): usage stayed at "Calculating usage…" and Recent work could not be opened. Such a window now shows "No reset time yet", and each panel section renders on its own, so one bad section cannot stop the rest.
+- AGENTS.md rule: for work that is left, the handoff copies the user's requirements as they gave them (exact formats, names, messages, options), since the next agent may not have seen that conversation. In a small exploratory pilot (Codex hands over to Claude; the spec existed only in the previous chat), continuations completed 3/4 with the rule vs 2/4 before. Projects get the rule when they run Initialize project again.
+
 ## 0.5.1 (preview)
 
 - GitHub Copilot shares memory through its own hooks, like Claude Code and Codex: **Install hooks** on its card writes `~/.copilot/hooks/ai-baton.json`. Each message gets the shared context (newer checkpoints included), and each final answer is saved once as Copilot's checkpoint, without the agent having to call a tool (a turn with megabytes of tool output may be skipped; the previous checkpoint then stays). The hooks run only in **Copilot CLI** chats (Copilot's agent runtime); a **Local** chat runs none and gets no memory from them. **New chat** on the card opens a Copilot CLI chat. Chats already open pick the hooks up from their next message.
