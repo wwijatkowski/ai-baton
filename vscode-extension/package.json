@@ -74,6 +74,13 @@
     "configuration": {
       "title": "AI Baton",
       "properties": {
+        "aiBaton.contextWarning": {
+          "type": "number",
+          "default": 50,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Warn on an agent's card when a conversation's context passes this share of the model's window, in percent. 0 turns the warning off."
+        },
         "aiBaton.home": {
           "type": "string",
           "default": "",

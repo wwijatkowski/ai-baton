@@ -22,6 +22,7 @@ h2 { text-transform: none; letter-spacing: 0; font-size: 12px; margin-top: 20px;
 .session button.entry { all: unset; display: flex; gap: 8px; align-items: center; cursor: pointer; width: 100%; }
 .session button.entry:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
 .session .who { font-weight: 600; }
+.session .chat-title { margin: 4px 0 0 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session .text { margin: 4px 0 6px 16px; color: var(--vscode-foreground); white-space: pre-wrap; overflow-wrap: anywhere; }
 .session .text.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; color: var(--muted); }
 .session .row { margin-left: 16px; }

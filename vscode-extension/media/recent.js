@@ -41,7 +41,7 @@
 
   function matches(e) {
     const q = view.query.trim().toLowerCase();
-    return (view.agent === 'all' || e.agent === view.agent) && (!q || (e.summary || '').toLowerCase().includes(q));
+    return (view.agent === 'all' || e.agent === view.agent) && (!q || `${e.title || ''}\n${e.summary || ''}`.toLowerCase().includes(q));
   }
 
   function entry(e) {
@@ -58,6 +58,7 @@
           `${e.started && e.started !== e.saved_at ? time(e.started) + '–' : ''}${time(e.saved_at)} · ${e.turns} ${e.turns === 1 ? 'reply' : 'replies'}` +
           `${e.commit ? ' · @ ' + e.commit : ''}`),
         e.handoff_updated && h('span', { class: 'badge' }, 'handoff')),
+      e.title && h('div', { class: 'chat-title', title: e.title }, e.title),
       h('div', { class: open ? 'text' : 'text clamp' }, plain(e.summary) || '(no summary)'),
       open && h('div', { class: 'row' },
         agent && (agent.sessions && e.session_id
@@ -79,7 +80,7 @@
       if (!days.length || days[days.length - 1][0] !== d) days.push([d, []]);
       days[days.length - 1][1].push(e);
     }
-    const search = h('input', { type: 'search', placeholder: 'Search summaries', 'aria-label': 'Search summaries', value: view.query });
+    const search = h('input', { type: 'search', placeholder: 'Search titles and summaries', 'aria-label': 'Search titles and summaries', value: view.query });
     search.addEventListener('input', (ev) => {
       view.query = ev.target.value;
       render();
