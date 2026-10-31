@@ -283,7 +283,8 @@ class ContinueTest(unittest.TestCase):
             claude = continuation.command('claude', SESSION, odd)  # Git Bash on Windows.
             self.assertIn(f"--path '/work/it'\"'\"'s $(x) `y` $HOME'", claude)
             self.assertTrue(claude.startswith("'C:/Py $x/python.exe' 'C:/a'\"'\"'b/bin/baton' continue"))
-        self.assertIn("--path '/work/it'\"'\"'s $(x) `y` $HOME'", continuation.command('codex', CODEX, odd))
+        with mock.patch.object(continuation.os, 'name', 'posix'):  # Codex elsewhere: a POSIX shell.
+            self.assertIn("--path '/work/it'\"'\"'s $(x) `y` $HOME'", continuation.command('codex', CODEX, odd))
 
     def test_credentials_are_redacted_and_counted(self):
         chat = Claude(self.project)
