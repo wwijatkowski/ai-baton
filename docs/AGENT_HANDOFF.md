@@ -2,7 +2,12 @@
 
 A short, current state of the work for the next agent. Replace outdated content; do not keep history here (that is what Git and `docs/knowledge/` are for).
 
-**Last updated:** 2026-10-28 (evening), Claude
+**Last updated:** 2026-10-31, Claude
+
+## Now (2026-10-31)
+- Privacy: raw Codex transcripts committed under `bench/frozen*/` (pilots 2, 3, 3b) contain the user's private global settings (Codex system prompt). No credentials, but they must leave the public repo: redact the files, rewrite history and force-push, after the user approves. Until then do not merge PR #13. `bench/run.py` must redact rollouts before copying them (lines with `a-transcript.jsonl`). User rule: nothing private may ever reach this public repo; check every diff, including archives and bundles, before committing.
+- Ideas reviewed (see DECISIONS 2026-10-31): next feature is a context-size indicator per active session in the panel, with a warning that suggests saving and `/clear`. Shared chat deferred; gateway is agent configuration, not an AI Baton feature.
+- Antigravity (Google) as a user agent: a local MCP config (`.agents/`, machine-specific, never commit) starts `baton mcp --agent antigravity`; server handshake verified, real client load/save not yet. `baton review` supports Claude/Codex only.
 
 ## Current state
 AI Baton 0.5.1 (preview) is PUBLISHED on the VS Code Marketplace and Open VSX (`wwijatkowski.ai-baton`, 2026-10-28; every release since v0.4.0 is published by `release.yml` from its version tag, with a GitHub release holding the .vsix). The repo `github.com/wwijatkowski/ai-baton` is public.

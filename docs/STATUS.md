@@ -17,6 +17,9 @@ One place to switch between coding agents on a project without losing context or
 
 ## In progress
 - Dogfooding AI Baton on this repo.
+- Removing private data from committed bench transcripts (redact, rewrite history; waits for the user's approval).
+- Antigravity via MCP: server verified, client not yet.
+- Next feature: context-size indicator and `/clear` suggestion in the panel.
 
 ## To do
 1. Done: 0.4.1 published on the VS Code Marketplace and Open VSX by `release.yml` from a version tag, with no stored tokens (Azure managed identity, Open VSX trusted publishing). Left: publisher display name.

@@ -33,6 +33,7 @@ BENCH = Path(__file__).resolve().parent
 ROOT = BENCH.parent
 sys.path.insert(0, str(ROOT))
 import metrics  # noqa: E402  (bench/metrics.py)
+import redact  # noqa: E402  (bench/redact.py: no user config in saved transcripts)
 
 BATON = ROOT / 'bin' / 'baton'
 TASKS = ('shelf', 'textstats')
@@ -153,7 +154,7 @@ def prepare(task):
         s = metrics.Summary('codex')
         metrics.parse_codex(s, rollout)
         summary = s.result(None)
-        shutil.copy(rollout, frozen / 'a-transcript.jsonl')
+        redact.copy(rollout, frozen / 'a-transcript.jsonl')
     (frozen / 'a.json').write_text(json.dumps({
         'model': A_MODEL, 'effort': A_EFFORT, 'prompt': PROMPT_A, 'exit': proc.returncode, 'seconds': round(time.time() - started),
         'summary': summary, 'at': datetime.now(timezone.utc).isoformat()}, indent=2) + '\n')
@@ -336,7 +337,7 @@ def prepare2(task):
         s = metrics.Summary('codex')
         metrics.parse_codex(s, rollout)
         summary = s.result(None)
-        shutil.copy(rollout, frozen / 'a-transcript.jsonl')
+        redact.copy(rollout, frozen / 'a-transcript.jsonl')
     (frozen / 'a.json').write_text(json.dumps({
         'model': A_MODEL, 'effort': A_EFFORT, 'prompt': PROMPT_A2, 'exit': proc.returncode,
         'seconds': round(time.time() - started), 'summary': summary, 'final_reply': reply,
@@ -479,7 +480,7 @@ def prepare3(task, seed, variant=''):
                 s = metrics.Summary('codex')
                 metrics.parse_codex(s, rollout)
                 summary = s.result(None)
-                shutil.copy(rollout, state / 'a-transcript.jsonl')
+                redact.copy(rollout, state / 'a-transcript.jsonl')
             (state / 'a.json').write_text(json.dumps({
                 'model': A_MODEL, 'effort': A_EFFORT, 'kind': kind, 'pair': pair, 'exit': proc.returncode,
                 'repo_tests': repo_ok, 'seconds': round(time.time() - started), 'summary': summary,
