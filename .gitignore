@@ -5,3 +5,7 @@ node_modules/
 .DS_Store
 .agent-memory/
 .vscode-test/
+# The maintainer's private notes and benchmark (see AGENTS.md): never part of this repo.
+/docs
+/bench
+/.baton.json

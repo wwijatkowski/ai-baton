@@ -13,6 +13,8 @@ Run and test:
 - CLI: `python3 bin/baton status .`
 - Extension: package with `sh scripts/package.sh` (bundles the CLI and checks the .vsix), install the `.vsix`, then Developer: Reload Window. While developing, set `aiBaton.home` to this checkout so the panel runs it directly. VS Code caches activity bar icons by path, so rename the icon file when changing it.
 
+This repo holds only the product. `docs/` and `bench/` (handoff, status, decisions, benchmark) are the maintainer's private notes, linked in locally and git-ignored; when they are missing, skip the steps below that use them. Never create them here, and never commit notes, analyses, experiments or test reports to this repo.
+
 Constraints: hooks must stay fast (10 s timeout), local only (no network or model calls) and must never block an agent; never copy secrets into memory. All user-facing text is in English.
 
 <!-- BEGIN AI-BATON -->
