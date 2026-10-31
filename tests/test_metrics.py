@@ -224,5 +224,51 @@ class MetricsTest(unittest.TestCase):
             self.assertFalse(metrics.shell_edit(command), command)
 
 
+class RedactTest(unittest.TestCase):
+    """bench/redact.py: a saved rollout keeps the run and nothing about the user's machine."""
+
+    def test_only_the_run_survives(self):
+        import redact
+        private = 'PRIVATE-SENTINEL'
+        msg = lambda role, text: {'type': 'response_item', 'payload': {'type': 'message', 'role': role,
+                                                                       'content': [{'type': 'input_text', 'text': text}]}}
+        rollout = lines(
+            {'type': 'session_meta', 'payload': {'id': 's1', 'creator_account_id': private, 'base_instructions': private}},
+            {'type': 'world_state', 'payload': {'skills': private}},
+            {'type': 'event_msg', 'payload': {'type': 'thread_settings_applied', 'thread_settings': {
+                'collaboration_mode': {'settings': {'developer_instructions': private}}}}},
+            {'type': 'event_msg', 'payload': {'type': 'some_future_event', 'data': private}},
+            {'type': 'response_item', 'payload': {'type': 'additional_tools', 'role': 'developer', 'tools': private}},
+            msg('developer', private),
+            msg('user', f'<user_instructions>{private}</user_instructions>'),
+            msg('user', f'<environment_context>{private}</environment_context>'),
+            msg('user', f'# AGENTS.md instructions for /tmp/x\n{private}'),
+            {'type': 'turn_context', 'payload': {'turn_id': 't1', 'cwd': '/tmp/x', 'model': 'gpt-x',
+                                                 'collaboration_mode': {'settings': {'developer_instructions': private}}}},
+            msg('user', 'Build the report.'),
+            {'type': 'response_item', 'payload': {'type': 'function_call', 'name': 'exec_command', 'arguments': '{"cmd": "ls"}'}},
+            {'type': 'event_msg', 'payload': {'type': 'item_completed', 'output': '/home/someone/.codex/sessions/r.jsonl'}},
+            {'type': 'event_msg', 'payload': {'type': 'item_completed', 'output': '-rw-r--r--  1 someone  wheel  84 part1.md'}},
+            {'type': 'event_msg', 'payload': {'type': 'token_count', 'info': {'total_token_usage': {
+                'input_tokens': 50, 'cached_input_tokens': 10, 'output_tokens': 5, 'total_tokens': 55}}}},
+            msg('assistant', 'Done.'),
+        )
+        out = redact.redact(rollout, home='/home/someone')
+        self.assertNotIn(private, out)
+        self.assertNotIn('someone', out)
+        self.assertIn('1 user  wheel', out)
+        self.assertIn('~/.codex/sessions/r.jsonl', out)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'r.jsonl'
+            path.write_text(out)
+            summary = metrics.Summary('codex')
+            metrics.parse_codex(summary, path)
+            result = summary.result(None)
+        self.assertEqual(result['prompts'], 1)
+        self.assertEqual(result['tool_calls'], 1)
+        self.assertEqual(result['models'], ['gpt-x'])
+        self.assertEqual(result['usage'], {'input': 40, 'cache_read': 10, 'cache_write': 0, 'output': 5})
+
+
 if __name__ == '__main__':
     unittest.main()

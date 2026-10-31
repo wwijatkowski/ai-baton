@@ -162,8 +162,22 @@ panel.send({ type: 'state', state: { ...state, usage: unstarted, projectUsage: u
 check('panel, window not started', panel.app);
 if (!panel.app.textContent.includes('No reset time yet')) failures.push('panel: a window without a reset time is not shown');
 // A section that throws shows its own error; the rest of the panel still renders and responds.
-panel.send({ type: 'state', state: { ...state, usage: { ...state.usage, limits: { claude: { claude: { at: iso(5), primary: {} } } } }, projectUsage: null }, root: '/p' });
-if (!button(panel.app, 'Recent work')) failures.push('panel: a failing section hid the rest of the panel');
+const errors = [];
+const consoleError = console.error;
+console.error = (e) => errors.push(e);
+panel.send({ type: 'state', state: { ...state, usage: { ...state.usage, agents: null }, projectUsage: null }, root: '/p' });
+if (!errors.length) failures.push('panel: the broken usage data did not throw, so section isolation went untested');
+if (!panel.app.textContent.includes('Could not show this section')) failures.push('panel: a failing section shows no error');
+const fold = button(panel.app, 'Recent work');
+if (!fold) failures.push('panel: a failing section hid the rest of the panel');
+else {
+  const open = fold.textContent.startsWith('▾');
+  fold.click();
+  if (button(panel.app, 'Recent work').textContent.startsWith('▾') === open) failures.push('panel: Recent work stopped responding after a failing section');
+}
+panel.send({ type: 'state', state, root: '/p' });
+check('panel, recovered after a failing section', panel.app);
+if (panel.app.textContent.includes('Could not show this section')) failures.push('panel: did not recover once the data was valid');
 
 const recent = load('recent.js');
 check('recent, loading', recent.app);

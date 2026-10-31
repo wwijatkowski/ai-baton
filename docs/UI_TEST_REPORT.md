@@ -50,7 +50,7 @@ Nothing was installed, edited, committed or sent. "Remove", "Install hooks" and 
 
 **5.1 Google Antigravity FAIL.** Picking Google Antigravity did not open its extension page. It opened the Extensions side bar searched for `Google.google-antigravity`, with one result and an Install button.
 - Likely cause: `extension.open` threw for this ID, so `findAgents` in `vscode-extension/extension.js` (around line 436) fell back to `workbench.extensions.search`.
-- Screenshot: `~/.claude/projects/-Users-wiktorwijatkowski-Library-Application-Support-Claude-scratch-workspaces-065a41ac-7c69-462f-9f94-088efae202f6-203b491c-e5e1-47a0-84e2-837ab43e40ba-scratch-2026-10-25-ac5592/05d53e84-170a-4a1d-81be-656fd407c8f6/tool-results/mcp-computer-use-blob-1792951534444-4hmbyy.jpg` (sent in chat too). It is outside the repo because this report is the only file I was allowed to create.
+- Screenshot: `~/.claude/projects/-Users-<user>-Library-Application-Support-Claude-scratch-workspaces-065a41ac-7c69-462f-9f94-088efae202f6-203b491c-e5e1-47a0-84e2-837ab43e40ba-scratch-2026-10-25-ac5592/05d53e84-170a-4a1d-81be-656fd407c8f6/tool-results/mcp-computer-use-blob-1792951534444-4hmbyy.jpg` (sent in chat too). It is outside the repo because this report is the only file I was allowed to create.
 - The page still lets the user reach Install, so it is a minor failure.
 
 **6.1 PASS.** The "This project" tiles show Codex 241k and Claude 1.2M with a 14-day chart. "All" shows Codex 257k and Claude 1.6M ("6.7M in 7 days") with a fuller chart.
@@ -420,7 +420,7 @@ Date: 2026-10-26, 14:38–14:40 local. Tested by Claude (Claude desktop, compute
 
 ## Details
 
-**1 PASS.** `~/baton-test6` (like all earlier test folders) had been deleted since round 6: `open -a "Visual Studio Code" ~/baton-test6` answered "The file /Users/wiktorwijatkowski/baton-test6 does not exist." The tester recreated it with `git init` (no commits) and opened it in a new window, which showed Restricted Mode until the user trusted it. The restored window had no Claude view: the secondary side bar showed only Chat and Codex tabs and the editor only "Welcome", so nothing had to be closed. Initialize project was then run (the dialog, "Project ready…" toast, cards with "No checkpoint"), because a fresh folder shows only "This folder is not connected yet".
+**1 PASS.** `~/baton-test6` (like all earlier test folders) had been deleted since round 6: `open -a "Visual Studio Code" ~/baton-test6` answered "The file ~/baton-test6 does not exist." The tester recreated it with `git init` (no commits) and opened it in a new window, which showed Restricted Mode until the user trusted it. The restored window had no Claude view: the secondary side bar showed only Chat and Codex tabs and the editor only "Welcome", so nothing had to be closed. Initialize project was then run (the dialog, "Project ready…" toast, cards with "No checkpoint"), because a fresh folder shows only "This folder is not connected yet".
 
 **2 PASS.** **New chat** on the Claude card opened an editor tab "Claude Code" beside Welcome. After a moment it showed an empty "Untitled" conversation (Claude Code logo, "You've come to the absolutely right place!", "Introducing Sonnet 5.5" card, input "⌘ Esc to focus or unfocus Claude", model "Opus 5.5"). No error notification.
 
@@ -468,7 +468,7 @@ Tester: Claude desktop (computer use, click-only in VS Code; the user pressed En
 
 **A4 PASS.** Model step "Claude reviews with which model?" (hint "For this review only; new conversations keep their settings."): Default (default (last used: Opus 5.5)), Opus opus, Sonnet sonnet, Haiku haiku, Fable claude-fable-5-1[1m] ("Fable 5.1 · Most capable for your hardest and longest-running tasks"). Effort step "Claude · Haiku reviews with which effort?" (hint "Higher effort looks deeper and uses more of your plan."): Default, low, medium, high, xhigh. Step 3/3 "Ask for review (3/3): anything to look at closely?" with "Claude gets the changes (or, if no files changed, the conversation's replies) plus the latest summary and the handoff…". The user pressed Enter.
 
-**A5 PASS.** The tester did not see the progress notification itself (it was on screen while the user pressed Enter). About a minute later: notification "Claude (Haiku · low)'s review is ready." with **Copy review** (no Send to, since there was no author conversation), and an Untitled Markdown tab "# Review by Claude (Haiku · low)", "- Reviewed: the uncommitted changes", "Ranked by importance:" with at least 4 numbered points (1. unrelated README.md line 2; 2. handoff does not record the work; 3. decision entry misses "who decided"; 4. handoff `@`-imported into CLAUDE.md). The review's Claude transcript (`~/.claude/projects/-Users-wiktorwijatkowski-baton-test-review/f9217faa….jsonl`) shows `claude-haiku-5-5`, so the model really was Haiku. It saved no checkpoint (history has only the two test B turns).
+**A5 PASS.** The tester did not see the progress notification itself (it was on screen while the user pressed Enter). About a minute later: notification "Claude (Haiku · low)'s review is ready." with **Copy review** (no Send to, since there was no author conversation), and an Untitled Markdown tab "# Review by Claude (Haiku · low)", "- Reviewed: the uncommitted changes", "Ranked by importance:" with at least 4 numbered points (1. unrelated README.md line 2; 2. handoff does not record the work; 3. decision entry misses "who decided"; 4. handoff `@`-imported into CLAUDE.md). The review's Claude transcript (`~/.claude/projects/-Users-<user>-baton-test-review/f9217faa….jsonl`) shows `claude-haiku-5-5`, so the model really was Haiku. It saved no checkpoint (history has only the two test B turns).
 
 **A6 PASS.** Step 2/3 then listed: "Claude default (last used: Opus 5.5)", "Claude · Haiku · low  last used for review", "Claude: another model or effort…", "Codex default (GPT-6.1-Sol)", "Codex: another model or effort…". Instead of Esc, the tester continued from this open picker with A7 (same step, one fewer reopen).
 
@@ -487,7 +487,7 @@ Tester: Claude desktop (computer use, click-only in VS Code; the user pressed En
 ## State left behind (round 7)
 
 - `~/.ai-baton/versions/0.4.1` now holds the CLI bundled in the test .vsix (copied with the user's approval); it is what the installer would have put there for a new version.
-- `~/baton-test-review`: deleted after the test, together with its VS Code window (the Untitled review tab closed without saving). Its Claude transcripts remain in `~/.claude/projects/-Users-wiktorwijatkowski-baton-test-review/` (Claude's own data, not removed).
+- `~/baton-test-review`: deleted after the test, together with its VS Code window (the Untitled review tab closed without saving). Its Claude transcripts remain in `~/.claude/projects/-Users-<user>-baton-test-review/` (Claude's own data, not removed).
 - The only file in this repo edited by the tester is this report. Nothing committed.
 
 # Round 8: Connect memory for GitHub Copilot (2026-10-27)
@@ -534,7 +534,7 @@ Tester: Claude desktop (computer use, click-only in VS Code; the user typed the 
 
 **C1 PASS.** **Disconnect** brought back "No memory hooks, so this agent does not share memory yet." with Connect memory.
 
-**C2 PASS.** New chat (Agent mode, "Auto routed task to mai-code-1.1-flash"), "Call baton_context for this project." Copilot searched tools, found none, and asked "Run in terminal?" for `which baton_context >/dev/null 2>&1 && baton_context /Users/wiktorwijatkowski/baton-test-mcp || echo 'baton_context not found'`. The tester clicked Skip. Final reply: "I'm unable to call baton_context because the user explicitly denied permission for that tool call." (It means the skipped shell command; the MCP tool was gone.)
+**C2 PASS.** New chat (Agent mode, "Auto routed task to mai-code-1.1-flash"), "Call baton_context for this project." Copilot searched tools, found none, and asked "Run in terminal?" for `which baton_context >/dev/null 2>&1 && baton_context ~/baton-test-mcp || echo 'baton_context not found'`. The tester clicked Skip. Final reply: "I'm unable to call baton_context because the user explicitly denied permission for that tool call." (It means the skipped shell command; the MCP tool was gone.)
 
 ## Other observations (round 8)
 
@@ -673,7 +673,7 @@ Tester: Claude desktop (computer use: background clicks in VS Code, plus full-sc
 
 **C1 PASS** (`round10-C1-tools-and-hooks-on.png`). Notification "Copilot can now use AI Baton's memory tools in agent mode, in every workspace. It decides when to call them: the instructions ask it to load the shared context when a chat starts and to save a checkpoint after its work. If a chat skips them, ask it to call baton_context or baton_checkpoint." Card: "Memory hooks and tools on. The hooks run in Copilot CLI chats, not in Local ones." with **Disconnect** (tooltip "Stop offering AI Baton's MCP server to this agent").
 
-**C2 PASS** (`round10-C2-tools-only.png`). `baton uninstall-hooks --agents=copilot` printed "- /Users/wiktorwijatkowski/.copilot/hooks/ai-baton.json: removed". After Refresh the card showed:
+**C2 PASS** (`round10-C2-tools-only.png`). `baton uninstall-hooks --agents=copilot` printed "- ~/.copilot/hooks/ai-baton.json: removed". After Refresh the card showed:
 - a box "Memory tools are on. Install hooks so it also gets the shared context at the start and its turns are saved by themselves." with **Install hooks**;
 - below it "Memory tools on: it decides when to call them (agent mode)." with **Disconnect**.
 
