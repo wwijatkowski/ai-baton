@@ -11,13 +11,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from baton import usage  # noqa: E402
 
+# Absolute on every system: summarize() resolves the project (on Windows /work/p becomes D:\work\p).
+P, Q = str(Path('/work/p').resolve()), str(Path('/work/q').resolve())
+
 
 def stamp(minutes_ago):
     return (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).isoformat().replace('+00:00', 'Z')
 
 
 def claude_call(minutes_ago, message_id, fresh, read, write=0, output=10, model='claude-opus-5-5', **extra):
-    return {'type': 'assistant', 'timestamp': stamp(minutes_ago), 'sessionId': 'c1', 'cwd': '/work/p',
+    return {'type': 'assistant', 'timestamp': stamp(minutes_ago), 'sessionId': 'c1', 'cwd': P,
             'entrypoint': 'claude-vscode', 'isSidechain': False,
             'message': {'id': message_id, 'model': model, 'role': 'assistant', 'content': [{'type': 'text', 'text': 'x'}],
                         'usage': {'input_tokens': fresh, 'cache_read_input_tokens': read,
@@ -31,7 +34,7 @@ def codex_tokens(minutes_ago, last_input, total, window=475000):
         'model_context_window': window}}}
 
 
-def codex_meta(session, source='vscode', cwd='/work/p'):
+def codex_meta(session, source='vscode', cwd=P):
     return [{'timestamp': stamp(60), 'type': 'session_meta', 'payload': {'id': session, 'cwd': cwd, 'source': source,
                                                                           'originator': 'codex_vscode'}},
             {'timestamp': stamp(60), 'type': 'turn_context', 'payload': {'cwd': cwd, 'model': 'gpt-6.1-sol'}}]
@@ -130,14 +133,15 @@ class ContextTest(unittest.TestCase):
         # The newest copy is unattended or in another folder: the older interactive copy must not stand in for it.
         older = [claude_call(30, 'm1', 1, 400_000)]
         for newer in ([claude_call(10, 'm2', 1, 500_000, entrypoint='sdk-cli')],
-                      [claude_call(10, 'm2', 1, 500_000, cwd='/work/q')]):
+                      [claude_call(10, 'm2', 1, 500_000, cwd=Q)]):
             for names in (('a', 'b'), ('b', 'a')):
                 with self.subTest(newer=newer[0].get('entrypoint') or newer[0]['cwd'], order=names):
                     shutil.rmtree(self.claude, ignore_errors=True)
                     (self.tmp / 'cache.json').unlink(missing_ok=True)
                     self.write(self.claude / '-work-p' / f'{names[0]}.jsonl', older)
+                    self.assertEqual(len(self.contexts(project=P)), 1)  # Shown until a newer copy exists.
                     self.write(self.claude / '-work-p' / f'{names[1]}.jsonl', older + newer)
-                    self.assertEqual(self.contexts(project='/work/p'), [])
+                    self.assertEqual(self.contexts(project=P), [])
 
     def test_codex_compaction_is_never_decoded(self):
         for ordinal in (',"ordinal":7', ''):
@@ -160,12 +164,12 @@ class ContextTest(unittest.TestCase):
         self.write(self.claude / '-work-p' / 'a.jsonl', [claude_call(5, 'a1', 1, 50_000, model='future-model')])
         self.write(self.claude / '-work-p' / 'b.jsonl',
                    [claude_call(4, 'b1', 1, 300_000, model='claude-haiku-4-5', sessionId='b')])
-        self.write(self.claude / '-work-q' / 'c.jsonl', [claude_call(3, 'c1', 1, 10, sessionId='c', cwd='/work/q')])
+        self.write(self.claude / '-work-q' / 'c.jsonl', [claude_call(3, 'c1', 1, 10, sessionId='c', cwd=Q)])
         self.write(self.claude / '-work-p' / 'd.jsonl', [claude_call(60 * 30, 'd1', 1, 10, sessionId='d')])
         windows = {c['session']: c['window'] for c in self.contexts()}
         # No window for an unknown model, nor for one past its table entry (the table must be wrong then).
         self.assertEqual(windows, {'c1': None, 'b': None, 'c': 1_000_000})
-        self.assertEqual({c['session'] for c in self.contexts(project='/work/p')}, {'c1', 'b'})
+        self.assertEqual({c['session'] for c in self.contexts(project=P)}, {'c1', 'b'})
 
     def test_claude_window_table(self):
         self.assertEqual(usage.claude_window('claude-haiku-4-5'), 200_000)
