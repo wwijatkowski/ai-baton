@@ -11,11 +11,15 @@
   const STALE_MINUTES = 60;
   // Kept across re-renders; Recent work starts collapsed.
   const view = { recentOpen: false, expanded: new Set(), dismissed: new Set() };
-  // Dismissed warnings are kept in the webview's state: VS Code drops the page when the view is hidden.
+  // Dismissed warnings are kept in the webview's state: VS Code drops the page when the view is hidden. Only the
+  // latest MAX_DISMISSED are kept (oldest first in the Set), so the state does not grow with every old conversation.
+  const MAX_DISMISSED = 100;
   const saved = (vscode.getState && vscode.getState()) || {};
-  if (Array.isArray(saved.dismissed)) view.dismissed = new Set(saved.dismissed);
+  if (Array.isArray(saved.dismissed)) view.dismissed = new Set(saved.dismissed.slice(-MAX_DISMISSED));
   const dismiss = (key) => {
+    view.dismissed.delete(key);
     view.dismissed.add(key);
+    view.dismissed = new Set([...view.dismissed].slice(-MAX_DISMISSED));
     if (vscode.setState) vscode.setState({ ...((vscode.getState && vscode.getState()) || {}), dismissed: [...view.dismissed] });
   };
   let last = null;

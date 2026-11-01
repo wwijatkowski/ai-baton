@@ -195,16 +195,23 @@ if (!panel.posted.some((m) => m.cmd === 'continue' && m.agent === 'claude' && m.
 button(contextWarning(), 'Dismiss').click();
 if (contextWarning() || !chat('Fix the login')) failures.push('panel: Dismiss did not hide only the warning');
 {
-  // VS Code drops a hidden view's page; the reloaded page must remember what was dismissed.
-  const stored = { state: undefined };
+  // VS Code drops a hidden view's page; the reloaded page must remember what was dismissed, and only that.
+  const stored = { state: { other: 1, dismissed: Array.from({ length: 120 }, (_, n) => `claude:gone${n}`) } };
   const first = load('panel.js', stored);
-  const big = withContexts([context()]);
+  const big = withContexts([context({ session: 'w1', title: 'W1' }), context({ session: 'w2', title: 'W2' })]);
   first.send({ type: 'state', state: big, root: '/p' });
-  first.app.all().find((e) => e.className === 'warning small').all().find((e) => e.tag === 'button' && e.textContent === 'Dismiss').click();
+  const w1 = first.app.all().find((e) => e.className === 'chat' && e.textContent.includes('W1'));
+  w1.all().find((e) => e.tag === 'button' && e.textContent === 'Dismiss').click();
   const again = load('panel.js', stored);
   again.send({ type: 'state', state: big, root: '/p' });
-  if (again.app.all().some((e) => e.className === 'warning small' && e.textContent.includes('re-reads'))) {
-    failures.push('panel: a dismissed context warning came back after the view was hidden and shown');
+  const chats = again.app.all().filter((e) => e.className === 'chat');
+  const warned = (name) => chats.some((e) => e.textContent.includes(name) && e.textContent.includes('re-reads'));
+  if (chats.length !== 2 || warned('W1') || !warned('W2')) {
+    failures.push('panel: after the view was hidden and shown, Dismiss is forgotten or hides more than one warning');
+  }
+  const kept = stored.state.dismissed || [];
+  if (stored.state.other !== 1 || kept.length !== 100 || kept[kept.length - 1] !== 'claude:w1' || kept.includes('claude:gone0')) {
+    failures.push('panel: Dismiss lost other saved state or does not keep only the latest 100');
   }
 }
 if (!button(panel.app, 'Recent work').textContent.startsWith('▾')) button(panel.app, 'Recent work').click();
@@ -229,6 +236,20 @@ const chatOrder = () => claudeCard().all().filter((e) => e.className === 'chat-t
 if (chatOrder() !== 'B1 B2 B4') failures.push(`panel: conversations not newest first with a warned one kept (got ${chatOrder()})`);
 panel.send({ type: 'state', state: withContexts([context({ session: 'new', title: 'Fresh', tokens: 70000 }), context({ session: 'old', title: 'Old' })]), root: '/p' });
 if (chatOrder() !== 'Fresh Old') failures.push('panel: a warned older conversation listed above a newer one');
+// Warnings take precedence over newer conversations without one, up to the three places; Dismiss frees a place.
+const warnedList = (n) => [context({ session: 'plain', title: 'P0', tokens: 1000 })]
+  .concat([1, 2, 3, 4].slice(0, n).map((k) => context({ session: `w${k}`, title: `W${k}` })));
+panel.send({ type: 'state', state: withContexts(warnedList(3)), root: '/p' });
+if (chatOrder() !== 'W1 W2 W3' || !claudeCard().textContent.includes('+1 more conversation in')) {
+  failures.push(`panel: three warned conversations not shown in time order with the newest plain one summarized (got ${chatOrder()})`);
+}
+panel.send({ type: 'state', state: withContexts(warnedList(4)), root: '/p' });
+if (chatOrder() !== 'W1 W2 W3' || !claudeCard().textContent.includes('+2 more conversations')) {
+  failures.push(`panel: four warned conversations not capped at three (got ${chatOrder()})`);
+}
+panel.send({ type: 'state', state: withContexts(warnedList(3)), root: '/p' });
+button(chat('W2'), 'Dismiss').click();
+if (chatOrder() !== 'P0 W1 W3') failures.push(`panel: Dismiss did not give the place back to the newest conversation (got ${chatOrder()})`);
 // A section that throws shows its own error; the rest of the panel still renders and responds.
 const errors = [];
 const consoleError = console.error;
