@@ -11,6 +11,17 @@
   const STALE_MINUTES = 60;
   // Kept across re-renders; Recent work starts collapsed.
   const view = { recentOpen: false, expanded: new Set(), dismissed: new Set() };
+  // Dismissed warnings are kept in the webview's state: VS Code drops the page when the view is hidden. Only the
+  // latest MAX_DISMISSED are kept (oldest first in the Set), so the state does not grow with every old conversation.
+  const MAX_DISMISSED = 100;
+  const saved = (vscode.getState && vscode.getState()) || {};
+  if (Array.isArray(saved.dismissed)) view.dismissed = new Set(saved.dismissed.slice(-MAX_DISMISSED));
+  const dismiss = (key) => {
+    view.dismissed.delete(key);
+    view.dismissed.add(key);
+    view.dismissed = new Set([...view.dismissed].slice(-MAX_DISMISSED));
+    if (vscode.setState) vscode.setState({ ...((vscode.getState && vscode.getState()) || {}), dismissed: [...view.dismissed] });
+  };
   let last = null;
   const rerender = () => last && render(last.state, last.root);
 
@@ -181,10 +192,13 @@
     const share = (c) => (c.window ? Math.round(100 * c.tokens / c.window) : null);
     const key = (c) => `${c.agent}:${c.session}`;
     const warns = (c) => !!limit && !c.compacted && share(c) !== null && share(c) >= limit && !view.dismissed.has(key(c));
-    // Newest first, but a conversation to warn about never hides behind "+N more".
+    // Newest first, but a conversation to warn about never hides behind "+N more": it takes a place in the list
+    // before newer ones without a warning, and keeps its order among them.
     const list = ((scoped && scoped.contexts) || []).filter((c) => c.agent === agent.id);
-    const all = list.filter(warns).concat(list.filter((c) => !warns(c)));
-    const rows = all.slice(0, MAX_CONTEXTS).map((c) => {
+    const keep = new Set(list.filter(warns).slice(0, MAX_CONTEXTS));
+    for (const c of list) if (keep.size < MAX_CONTEXTS) keep.add(c);
+    const shown = list.filter((c) => keep.has(c));
+    const rows = shown.map((c) => {
       const pct = share(c);
       const meta = [c.model, ago(c.at), c.compactions && `compacted ${c.compactions}×`].filter(Boolean).join(' · ');
       const fill = pct >= 90 ? 'var(--bad)' : warns(c) || (limit && pct >= limit) ? 'var(--warn)' : 'var(--ok)';
@@ -207,9 +221,9 @@
           h('span', null, `Every turn re-reads all ${fmt(c.tokens)} tokens, which costs tokens and time. ` +
             `At a good stopping point, ${SHRINK[c.agent] || 'save state and start a fresh conversation'}` +
             (CONTINUABLE.has(agent.id) && c.session ? ', or use Continue fresh: a new conversation that reads what you typed here.' : '.')),
-          h('button', { class: 'link', onclick: () => { view.dismissed.add(key(c)); rerender(); }, title: 'Hide this warning until the panel reloads' }, 'Dismiss')));
+          h('button', { class: 'link', onclick: () => { dismiss(key(c)); rerender(); }, title: 'Hide this warning for this conversation' }, 'Dismiss')));
     });
-    const more = all.length - MAX_CONTEXTS;
+    const more = list.length - shown.length;
     return more > 0 ? rows.concat(h('div', { class: 'small muted' }, `+${more} more ${more === 1 ? 'conversation' : 'conversations'} in the last 24 h`)) : rows;
   }
 
