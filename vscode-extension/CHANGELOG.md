@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.4 (preview)
+
+- Conversations on an agent's card are listed newest first. One with a context warning still keeps a place among the three shown, in its time order, instead of jumping to the top (after **Continue fresh** the new conversation was listed below the old one).
+- **Dismiss** on a context warning is remembered when the panel is hidden and shown again (for example after switching to another view); before, the warning came back.
+
 ## 0.5.3 (preview)
 
 - **Context size** on the Claude Code and Codex cards: the project's conversations from the last 24 hours, named as the agent lists them (with **Open** for that exact chat), each with the input of its last request (what it re-reads every turn), the model, its age and how often it was compacted. When the model's window is known it also shows the share of it ("Context X of Y"); right after a compaction the size returns with the next request. Past `aiBaton.contextWarning` (default 50%, 0 turns it off) it suggests what to do at a good stopping point, with **Dismiss**. Recent work shows the same chat titles. Titles are read locally from the agents' own files and dropped when the transcript is deleted.
