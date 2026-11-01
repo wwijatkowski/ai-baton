@@ -181,10 +181,13 @@
     const share = (c) => (c.window ? Math.round(100 * c.tokens / c.window) : null);
     const key = (c) => `${c.agent}:${c.session}`;
     const warns = (c) => !!limit && !c.compacted && share(c) !== null && share(c) >= limit && !view.dismissed.has(key(c));
-    // Newest first, but a conversation to warn about never hides behind "+N more".
+    // Newest first, but a conversation to warn about never hides behind "+N more": it takes a place in the list
+    // before newer ones without a warning, and keeps its order among them.
     const list = ((scoped && scoped.contexts) || []).filter((c) => c.agent === agent.id);
-    const all = list.filter(warns).concat(list.filter((c) => !warns(c)));
-    const rows = all.slice(0, MAX_CONTEXTS).map((c) => {
+    const keep = new Set(list.filter(warns).slice(0, MAX_CONTEXTS));
+    for (const c of list) if (keep.size < MAX_CONTEXTS) keep.add(c);
+    const shown = list.filter((c) => keep.has(c));
+    const rows = shown.map((c) => {
       const pct = share(c);
       const meta = [c.model, ago(c.at), c.compactions && `compacted ${c.compactions}×`].filter(Boolean).join(' · ');
       const fill = pct >= 90 ? 'var(--bad)' : warns(c) || (limit && pct >= limit) ? 'var(--warn)' : 'var(--ok)';
@@ -209,7 +212,7 @@
             (CONTINUABLE.has(agent.id) && c.session ? ', or use Continue fresh: a new conversation that reads what you typed here.' : '.')),
           h('button', { class: 'link', onclick: () => { view.dismissed.add(key(c)); rerender(); }, title: 'Hide this warning until the panel reloads' }, 'Dismiss')));
     });
-    const more = all.length - MAX_CONTEXTS;
+    const more = list.length - shown.length;
     return more > 0 ? rows.concat(h('div', { class: 'small muted' }, `+${more} more ${more === 1 ? 'conversation' : 'conversations'} in the last 24 h`)) : rows;
   }
 

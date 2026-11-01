@@ -212,6 +212,10 @@ panel.send({ type: 'state', state: withContexts([1, 2, 3, 4, 5].map((n) => conte
 if (!claudeCard().textContent.includes('+2 more conversations') || chat('T4')) failures.push('panel: more than three conversations not summarized');
 panel.send({ type: 'state', state: withContexts([1, 2, 3, 4].map((n) => context({ session: `big${n}`, title: `B${n}`, tokens: n === 4 ? 900000 : 1000 }))), root: '/p' });
 if (!contextWarning() || !chat('B4')) failures.push('panel: a large older conversation hidden behind "+N more"');
+const chatOrder = () => claudeCard().all().filter((e) => e.className === 'chat-title').map((e) => e.textContent).join(' ');
+if (chatOrder() !== 'B1 B2 B4') failures.push(`panel: conversations not newest first with a warned one kept (got ${chatOrder()})`);
+panel.send({ type: 'state', state: withContexts([context({ session: 'new', title: 'Fresh', tokens: 70000 }), context({ session: 'old', title: 'Old' })]), root: '/p' });
+if (chatOrder() !== 'Fresh Old') failures.push('panel: a warned older conversation listed above a newer one');
 // A section that throws shows its own error; the rest of the panel still renders and responds.
 const errors = [];
 const consoleError = console.error;
