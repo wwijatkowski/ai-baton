@@ -31,7 +31,7 @@ class El {
   click() { for (const fn of this.listeners.click || []) fn({ target: this }); }
 }
 
-function load(script) {
+function load(script, stored = { state: undefined }) {
   const nodes = { app: new El('div'), tip: new El('div') };
   const handlers = [];
   const posted = [];
@@ -43,7 +43,7 @@ function load(script) {
       createElementNS: (ns, tag) => new El(tag),
     },
     window: { addEventListener: (type, fn) => type === 'message' && handlers.push(fn), innerWidth: 800 },
-    acquireVsCodeApi: () => ({ postMessage: (m) => posted.push(m) }),
+    acquireVsCodeApi: () => ({ postMessage: (m) => posted.push(m), getState: () => stored.state, setState: (v) => { stored.state = v; } }),
     getComputedStyle: () => ({ getPropertyValue: () => '#888888' }),
     console,
   };
@@ -194,6 +194,19 @@ fresh.click();
 if (!panel.posted.some((m) => m.cmd === 'continue' && m.agent === 'claude' && m.session === 's1-aaaaaaaa-bbbb')) failures.push('panel: Continue fresh does not send that conversation');
 button(contextWarning(), 'Dismiss').click();
 if (contextWarning() || !chat('Fix the login')) failures.push('panel: Dismiss did not hide only the warning');
+{
+  // VS Code drops a hidden view's page; the reloaded page must remember what was dismissed.
+  const stored = { state: undefined };
+  const first = load('panel.js', stored);
+  const big = withContexts([context()]);
+  first.send({ type: 'state', state: big, root: '/p' });
+  first.app.all().find((e) => e.className === 'warning small').all().find((e) => e.tag === 'button' && e.textContent === 'Dismiss').click();
+  const again = load('panel.js', stored);
+  again.send({ type: 'state', state: big, root: '/p' });
+  if (again.app.all().some((e) => e.className === 'warning small' && e.textContent.includes('re-reads'))) {
+    failures.push('panel: a dismissed context warning came back after the view was hidden and shown');
+  }
+}
 if (!button(panel.app, 'Recent work').textContent.startsWith('▾')) button(panel.app, 'Recent work').click();
 if (!panel.app.all().some((e) => e.className === 'entry' && e.all().some((c) => c.className === 'chat-title' && c.textContent === 'Fix the login'))) {
   failures.push('panel: Recent work does not name the chat of an entry');

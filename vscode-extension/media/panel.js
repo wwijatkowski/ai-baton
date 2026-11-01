@@ -11,6 +11,13 @@
   const STALE_MINUTES = 60;
   // Kept across re-renders; Recent work starts collapsed.
   const view = { recentOpen: false, expanded: new Set(), dismissed: new Set() };
+  // Dismissed warnings are kept in the webview's state: VS Code drops the page when the view is hidden.
+  const saved = (vscode.getState && vscode.getState()) || {};
+  if (Array.isArray(saved.dismissed)) view.dismissed = new Set(saved.dismissed);
+  const dismiss = (key) => {
+    view.dismissed.add(key);
+    if (vscode.setState) vscode.setState({ ...((vscode.getState && vscode.getState()) || {}), dismissed: [...view.dismissed] });
+  };
   let last = null;
   const rerender = () => last && render(last.state, last.root);
 
@@ -210,7 +217,7 @@
           h('span', null, `Every turn re-reads all ${fmt(c.tokens)} tokens, which costs tokens and time. ` +
             `At a good stopping point, ${SHRINK[c.agent] || 'save state and start a fresh conversation'}` +
             (CONTINUABLE.has(agent.id) && c.session ? ', or use Continue fresh: a new conversation that reads what you typed here.' : '.')),
-          h('button', { class: 'link', onclick: () => { view.dismissed.add(key(c)); rerender(); }, title: 'Hide this warning until the panel reloads' }, 'Dismiss')));
+          h('button', { class: 'link', onclick: () => { dismiss(key(c)); rerender(); }, title: 'Hide this warning for this conversation' }, 'Dismiss')));
     });
     const more = list.length - shown.length;
     return more > 0 ? rows.concat(h('div', { class: 'small muted' }, `+${more} more ${more === 1 ? 'conversation' : 'conversations'} in the last 24 h`)) : rows;
