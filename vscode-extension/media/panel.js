@@ -187,7 +187,7 @@
   // Context size of this agent's conversations in the project: the input of each one's last request. Each one is
   // named as in the agent's own chat list, and Open goes to exactly that chat.
   function contexts(agent, state) {
-    const scoped = state.projectUsage || state.usage;
+    const scoped = state.projectUsage;  // Never all projects': without this folder's data, no list.
     const limit = Number(state.contextWarning) || 0;
     const share = (c) => (c.window ? Math.round(100 * c.tokens / c.window) : null);
     const key = (c) => `${c.agent}:${c.session}`;
