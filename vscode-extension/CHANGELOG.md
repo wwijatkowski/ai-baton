@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.5 (preview)
+
+- In a folder not set up with **Initialize project** yet, the agent cards list only that folder's conversations; before, they listed the recent conversations of every project. Project usage counts only that folder too, and after switching folders the previous folder's conversations are no longer shown while the new ones load.
+
 ## 0.5.4 (preview)
 
 - Conversations on an agent's card are listed newest first. One with a context warning still keeps a place among the three shown, in its time order, instead of jumping to the top (after **Continue fresh** the new conversation was listed below the old one).
