@@ -275,6 +275,25 @@ test('activation refreshes the status and the panel shows it', async (h) => {
   assert.ok(state.status.agents.every((a) => a.installed));
 });
 
+test('a folder not set up yet shows only its own conversations, never another folder\'s', async (h) => {
+  const OTHER = path.join(path.sep, 'work', 'other');
+  const usage = (rest) => {
+    const at = rest.indexOf('--project');
+    const folder = at === -1 ? null : rest[at + 1];
+    if (folder === OTHER) return Harness.HANG;  // Still being read.
+    return { agents: {}, contexts: folder ? [] : [{ agent: 'claude', session: 'elsewhere', cwd: OTHER }], titles: {} };
+  };
+  h.cli.usage = usage;
+  h.cli.status = () => ({ initialized: false, path: ROOT, agents: [], hidden_agents: [] });
+  await h.start();
+  assert.ok(h.cliArgs('usage').some((c) => c.join(' ').endsWith(`--project ${ROOT}`)), 'scoped to the open folder');
+  assert.deepStrictEqual(h.lastState().projectUsage.contexts, [], 'not every project\'s conversations');
+  h.cli.status = () => sampleStatus({ root: OTHER, path: OTHER });
+  h.commands['aiBaton.refresh']();  // Waits on the hung usage read.
+  await h.settle();
+  assert.strictEqual(h.lastState().projectUsage, null, 'the previous folder\'s data is gone before the new one arrives');
+});
+
 test('a CLI that prints something other than JSON is reported in the panel', async (h) => {
   h.cli.status = () => 'Traceback (most recent call last): oops';
   await h.start();

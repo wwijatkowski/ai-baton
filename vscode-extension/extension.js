@@ -178,6 +178,7 @@ async function refreshStatus() {
   const root = workspaceRoot();
   if (!root) {
     state.status = null;
+    forgetOtherFolder();
     return render();
   }
   try {
@@ -186,6 +187,7 @@ async function refreshStatus() {
     status.agents = status.agents.filter((a) => isInstalled(a) || a.checkpoint);
     for (const a of status.agents) a.installed = isInstalled(a);
     state.status = status;
+    forgetOtherFolder();
     state.error = null;
     if (recentPanel) loadRecent();
     refreshHooks();
@@ -295,12 +297,26 @@ async function approveHooks(id) {
     'This is needed once per computer.');
 }
 
+// The folder the project view is about. A folder not set up yet still scopes to itself: otherwise its panel would
+// list every project's conversations.
+function scopeOf(status) {
+  return (status && (status.initialized ? status.root : status.path)) || null;
+}
+
+// Another folder's conversations never show under this one, not even until its own usage is read.
+function forgetOtherFolder() {
+  if (state.projectRoot === scopeOf(state.status)) return;
+  state.projectUsage = null;
+  state.projectRoot = scopeOf(state.status);
+}
+
 async function refreshUsage() {
   const days = String(config('usageDays'));
   try {
     state.usage = JSON.parse(await baton(['usage', '--json', '--days', days]));
-    const root = state.status && state.status.initialized && state.status.root;
-    state.projectUsage = root ? JSON.parse(await baton(['usage', '--json', '--days', days, '--project', root])) : null;
+    const root = scopeOf(state.status);
+    const scoped = root ? JSON.parse(await baton(['usage', '--json', '--days', days, '--project', root])) : null;
+    if (root === scopeOf(state.status)) state.projectUsage = scoped;  // Unless the folder changed meanwhile.
   } catch (error) {
     output.appendLine(`usage: ${error.message}`);
   }

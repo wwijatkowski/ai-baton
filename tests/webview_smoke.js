@@ -168,6 +168,9 @@ const withContexts = (list, contextWarning = 50, titles = {}) => ({ ...state, co
 const claudeCard = () => panel.app.all().find((e) => e.className === 'card' && e.textContent.includes('Claude'));
 const chat = (name) => claudeCard().all().find((e) => e.className === 'chat' && e.textContent.includes(name));
 const contextWarning = () => panel.app.all().find((e) => e.className === 'warning small' && e.textContent.includes('re-reads'));
+// Without this folder's own usage (not read yet, or failed), no conversation from all projects stands in for it.
+panel.send({ type: 'state', state: { ...state, usage: { ...state.usage, contexts: [context()] }, projectUsage: null }, root: '/p' });
+if (claudeCard().all().some((e) => e.className === 'chat')) failures.push('panel: another project\'s conversations shown for this folder');
 panel.send({ type: 'state', state: withContexts([context(), context({ session: 's2-cccccccc-dddd', title: null, tokens: 100000 }), context({ agent: 'codex', session: 'c' })],
   50, { 'abc-1': 'Fix the login' }), root: '/p' });
 check('panel, large context', panel.app);
